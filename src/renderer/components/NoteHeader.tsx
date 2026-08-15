@@ -43,7 +43,7 @@ export const NoteHeader: React.FC<NoteHeaderProps> = ({
           style={{ opacity: isPinned ? 1 : 0.7 }}
           onClick={onTogglePin}
         >
-          <PinIcon isPinned={isPinned} size={15} />
+          <PinIcon isPinned={isPinned} size={16} />
         </button>
 
         <button

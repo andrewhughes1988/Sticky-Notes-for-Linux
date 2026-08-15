@@ -9,7 +9,7 @@ interface PinIconProps {
 
 export const PinIcon: React.FC<PinIconProps> = ({
   isPinned,
-  size = 15,
+  size = 16,
   className = '',
   style = {},
 }) => {
@@ -30,10 +30,10 @@ export const PinIcon: React.FC<PinIconProps> = ({
         ...style,
       }}
     >
-      {/* Classic Flat Pushpin Body */}
-      <path d="M16 3l5 5-2 2-1-1-4 4 1 1-1.5 1.5-7-7L9 7l1 1 4-4-1-1 2-2z" />
-      {/* Sharp Needle Point */}
-      <line x1="8.5" y1="15.5" x2="3" y2="21" stroke="currentColor" fill="none" strokeWidth="2.2" />
+      {/* Scaled-up Pushpin Body */}
+      <path d="M14.5 2.5l7 7-2.5 2.5-1-1-4.5 4.5 1.5 1.5-2 2-7.5-7.5 2-2 1.5 1.5 4.5-4.5-1-1L14.5 2.5z" />
+      {/* Needle Attached Directly to Collar Base */}
+      <line x1="9" y1="15" x2="2.5" y2="21.5" stroke="currentColor" fill="none" strokeWidth="2.2" />
     </svg>
   );
 };
