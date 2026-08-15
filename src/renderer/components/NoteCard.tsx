@@ -15,12 +15,21 @@ export const NoteCard: React.FC<NoteCardProps> = ({ note, onOpen, onDelete }) =>
   const isDark = note.color === 'charcoal';
   const theme = isDark ? themeDef.dark : themeDef.light;
 
-  const previewText = note.content_plain.trim() || 'Empty note';
-  const displayTitle = note.title || previewText.split('\n')[0] || 'Note';
+  const rawText = (note.content_plain || '').trim();
+  const previewText = rawText || 'Empty note';
 
   // Subtly darken header and border on hover without shifting position
   const activeHeaderColor = isHovered ? theme.headerBorder : theme.header;
   const activeBorderColor = isHovered ? theme.headerBorder : theme.border;
+
+  const handleCardClick = () => {
+    onOpen(note.id);
+  };
+
+  const handleDeleteClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    onDelete(note.id);
+  };
 
   return (
     <div
@@ -34,7 +43,7 @@ export const NoteCard: React.FC<NoteCardProps> = ({ note, onOpen, onDelete }) =>
         borderTopColor: activeHeaderColor,
         transition: 'border-color 0.15s ease, box-shadow 0.15s ease',
       }}
-      onClick={() => onOpen(note.id)}
+      onClick={handleCardClick}
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
     >
@@ -42,26 +51,22 @@ export const NoteCard: React.FC<NoteCardProps> = ({ note, onOpen, onDelete }) =>
         <span className="note-card-date">
           {formatFriendlyDate(note.updated_at)}
         </span>
-        <span className={`note-card-badge ${note.is_open ? 'badge-open' : 'badge-closed'}`}>
-          {note.is_open ? 'Open' : 'Closed'}
-        </span>
+        <div className="note-card-header-right">
+          <span className={`note-card-badge ${note.is_open ? 'badge-open' : 'badge-closed'}`}>
+            {note.is_open ? 'Open' : 'Closed'}
+          </span>
+          <button
+            type="button"
+            className="card-delete-icon-btn app-no-drag"
+            title="Delete note"
+            onClick={handleDeleteClick}
+          >
+            <Trash2 size={13} />
+          </button>
+        </div>
       </div>
-
-      <div className="note-card-title">{displayTitle}</div>
 
       <div className="note-card-preview">{previewText}</div>
-
-      <div className="note-card-actions app-no-drag" onClick={(e) => e.stopPropagation()}>
-        <button
-          type="button"
-          className="card-action-btn delete"
-          title="Delete note"
-          onClick={() => onDelete(note.id)}
-        >
-          <Trash2 size={13} />
-          <span>Delete</span>
-        </button>
-      </div>
     </div>
   );
 };

@@ -89,13 +89,17 @@ export class WindowManager {
       if (existing.isMinimized()) existing.restore();
       existing.show();
       existing.focus();
+      existing.moveTop();
       return;
     }
 
     const note = this.db.getNoteById(id);
     if (note) {
       this.db.setNoteOpenState(id, true);
-      this.createNoteWindow(note);
+      const win = this.createNoteWindow(note);
+      win.show();
+      win.focus();
+      win.moveTop();
       this.broadcast('notes:changed');
     }
   }

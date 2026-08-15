@@ -597,7 +597,7 @@ html, body, #root {
 /* Note Preview Card */
 .note-card {
   border-radius: 2px;
-  padding: 12px 14px;
+  padding: 10px 12px;
   cursor: pointer;
   position: relative;
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
@@ -606,7 +606,8 @@ html, body, #root {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  min-height: 80px;
+  min-height: 68px;
+  user-select: none;
 }
 
 .note-card:hover {
@@ -620,16 +621,22 @@ html, body, #root {
   justify-content: space-between;
 }
 
+.note-card-header-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .note-card-date {
   font-size: 11px;
-  opacity: 0.7;
+  opacity: 0.75;
   font-weight: 500;
 }
 
 .note-card-badge {
   font-size: 10px;
   padding: 2px 6px;
-  border-radius: 10px;
+  border-radius: 3px;
   font-weight: 600;
   text-transform: uppercase;
 }
@@ -644,60 +651,42 @@ html, body, #root {
   color: #666666 !important;
 }
 
-.note-card-title {
-  font-weight: 600;
-  font-size: 13px;
-  line-height: 1.3;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.card-delete-icon-btn {
+  background: transparent;
+  border: none;
+  border-radius: 3px;
+  padding: 3px;
+  cursor: pointer;
+  color: inherit;
+  opacity: 0.6;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: opacity 0.15s ease, background-color 0.15s ease, color 0.15s ease;
+}
+
+.card-delete-icon-btn:hover {
+  opacity: 1;
+  background: rgba(0, 0, 0, 0.08);
+  color: #D32F2F;
+}
+
+.note-card.dark .card-delete-icon-btn:hover {
+  background: rgba(255, 255, 255, 0.15);
+  color: #FF6666;
 }
 
 .note-card-preview {
-  font-size: 12px;
-  line-height: 1.4;
-  opacity: 0.85;
+  font-size: 12.5px;
+  line-height: 1.45;
+  opacity: 0.9;
   display: -webkit-box;
-  -webkit-line-clamp: 2;
+  -webkit-line-clamp: 4;
   -webkit-box-orient: vertical;
   overflow: hidden;
+  text-overflow: ellipsis;
   word-break: break-word;
-}
-
-.note-card-actions {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 4px;
-  margin-top: 4px;
-}
-
-.card-action-btn {
-  background: transparent;
-  border: none;
-  border-radius: var(--radius-sm);
-  padding: 4px 8px;
-  font-size: 11px;
-  cursor: pointer;
-  color: inherit;
-  opacity: 0.8;
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  transition: opacity 0.15s, background-color 0.15s;
-}
-
-.card-action-btn:hover {
-  opacity: 1;
-  background: rgba(0, 0, 0, 0.08);
-}
-
-.dark .card-action-btn:hover {
-  background: rgba(255, 255, 255, 0.12);
-}
-
-.card-action-btn.delete:hover {
-  color: #D32F2F;
+  white-space: pre-wrap;
 }
 
 /* Windows Delete Confirmation Modal */
