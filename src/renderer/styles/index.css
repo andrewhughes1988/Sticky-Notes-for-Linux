@@ -74,6 +74,7 @@ html, body, #root {
   overflow: hidden;
   border: 1.5px solid var(--theme-border, rgba(0, 0, 0, 0.15));
   box-sizing: border-box;
+  font-family: var(--note-font-family, var(--font-family));
   transition: background-color 0.2s ease, border-color 0.2s ease;
 }
 
@@ -251,11 +252,12 @@ html, body, #root {
   padding: 10px 14px;
   overflow-y: auto;
   outline: none;
-  font-size: 14px;
+  font-size: 15px;
   line-height: 1.6;
   user-select: text;
   word-break: break-word;
   color: inherit;
+  font-family: inherit;
 }
 
 .note-editor-content[contenteditable="true"]:empty:before {

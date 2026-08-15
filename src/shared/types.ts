@@ -292,6 +292,7 @@ export const NOTE_COLORS: Record<NoteColor, ColorThemeDef> = {
 
 export interface AppConfig {
   theme: 'system' | 'light' | 'dark';
+  fontFamily?: string;
   autostart: boolean;
   alwaysOnTopDefault: boolean;
   confirmDelete: boolean;
@@ -316,6 +317,7 @@ export interface StickyNotesAPI {
   onNoteUpdated: (callback: (note: Note) => void) => () => void;
   onNoteDeleted: (callback: (id: string) => void) => () => void;
   onNotesChanged: (callback: () => void) => () => void;
+  onSettingsChanged: (callback: (key: string, value: any) => void) => () => void;
 
   // Settings
   getConfig: () => Promise<AppConfig>;

@@ -14,10 +14,20 @@ export const ManagerView: React.FC = () => {
 
   // Initialize font preference
   const [selectedFontId, setSelectedFontId] = useState<string>(() => {
-    return localStorage.getItem('manager_font') || 'system';
+    return localStorage.getItem('app_font') || localStorage.getItem('manager_font') || 'system';
   });
 
   const currentFont = MANAGER_FONTS.find((f) => f.id === selectedFontId) || MANAGER_FONTS[0];
+
+  useEffect(() => {
+    window.stickyNotesAPI.getConfig().then((config) => {
+      if (config && config.fontFamily) {
+        setSelectedFontId(config.fontFamily);
+        localStorage.setItem('manager_font', config.fontFamily);
+        localStorage.setItem('app_font', config.fontFamily);
+      }
+    }).catch(() => {});
+  }, []);
 
   // Initialize theme from localStorage, or fallback to desktop system default
   const [isDarkMode, setIsDarkMode] = useState<boolean>(() => {
@@ -59,6 +69,8 @@ export const ManagerView: React.FC = () => {
   const handleSelectFont = useCallback((font: FontOption) => {
     setSelectedFontId(font.id);
     localStorage.setItem('manager_font', font.id);
+    localStorage.setItem('app_font', font.id);
+    window.stickyNotesAPI.setConfig('fontFamily', font.id).catch(() => {});
   }, []);
 
   const fetchNotes = useCallback(async (query: string = '') => {

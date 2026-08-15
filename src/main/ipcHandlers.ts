@@ -66,5 +66,6 @@ export function registerIpcHandlers(
     if (key === 'autostart') {
       autostartManager.setEnabled(Boolean(value));
     }
+    windowManager.broadcast('settings:changed', key, value);
   });
 }

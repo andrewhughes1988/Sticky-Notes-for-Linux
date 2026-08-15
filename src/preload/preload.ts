@@ -77,6 +77,14 @@ const api: StickyNotesAPI = {
     };
   },
 
+  onSettingsChanged: (callback: (key: string, value: any) => void) => {
+    const handler = (_event: any, key: string, value: any) => callback(key, value);
+    ipcRenderer.on('settings:changed', handler);
+    return () => {
+      ipcRenderer.removeListener('settings:changed', handler);
+    };
+  },
+
   getConfig: () => {
     return ipcRenderer.invoke('settings:getAll');
   },
