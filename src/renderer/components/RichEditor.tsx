@@ -469,12 +469,72 @@ export const RichEditor: React.FC<RichEditorProps> = ({
         return;
       }
 
-      // 3. Highlighted Range Selection: preserves independent formatting across overlapping tags
-      const savedRange = range.cloneRange();
+      // 3. Highlighted Range Selection: preserve exact character selection across DOM unwrap/normalize
+      const getSelectionOffsets = (root: HTMLElement): { start: number; end: number } | null => {
+        const sel = window.getSelection();
+        if (!sel || sel.rangeCount === 0) return null;
+        const currentRange = sel.getRangeAt(0);
+
+        const preStartRange = document.createRange();
+        preStartRange.selectNodeContents(root);
+        preStartRange.setEnd(currentRange.startContainer, currentRange.startOffset);
+        const start = preStartRange.toString().length;
+
+        const preEndRange = document.createRange();
+        preEndRange.selectNodeContents(root);
+        preEndRange.setEnd(currentRange.endContainer, currentRange.endOffset);
+        const end = preEndRange.toString().length;
+
+        return { start, end };
+      };
+
+      const restoreSelectionOffsets = (root: HTMLElement, start: number, end: number) => {
+        const sel = window.getSelection();
+        if (!sel) return;
+
+        let currentOffset = 0;
+        let startNode: Node | null = null;
+        let startNodeOffset = 0;
+        let endNode: Node | null = null;
+        let endNodeOffset = 0;
+
+        const treeWalker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null);
+        let textNode = treeWalker.nextNode();
+
+        while (textNode) {
+          const textLen = (textNode.textContent || '').length;
+
+          if (!startNode && currentOffset + textLen >= start) {
+            startNode = textNode;
+            startNodeOffset = start - currentOffset;
+          }
+
+          if (!endNode && currentOffset + textLen >= end) {
+            endNode = textNode;
+            endNodeOffset = end - currentOffset;
+            break;
+          }
+
+          currentOffset += textLen;
+          textNode = treeWalker.nextNode();
+        }
+
+        if (startNode && endNode) {
+          const newRange = document.createRange();
+          newRange.setStart(startNode, startNodeOffset);
+          newRange.setEnd(endNode, endNodeOffset);
+          sel.removeAllRanges();
+          sel.addRange(newRange);
+        }
+      };
+
+      const offsets = getSelectionOffsets(editorRef.current);
       applyOrRemoveRangeFormat(range, command, editorRef.current);
       editorRef.current.normalize();
-      selection.removeAllRanges();
-      selection.addRange(savedRange);
+
+      if (offsets) {
+        restoreSelectionOffsets(editorRef.current, offsets.start, offsets.end);
+      }
 
       pendingFormatsRef.current = null;
       checkFormats();
