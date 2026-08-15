@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="100%" height="100%">
+  <defs>
+    <filter id="dropShadow" x="-10%" y="-10%" width="130%" height="130%">
+      <feDropShadow dx="0" dy="12" stdDeviation="16" flood-color="#000000" flood-opacity="0.3"/>
+    </filter>
+    <linearGradient id="bodyGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#FFE033"/>
+      <stop offset="100%" stop-color="#FFD600"/>
+    </linearGradient>
+    <linearGradient id="headerGrad" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#F59E0B"/>
+      <stop offset="100%" stop-color="#FFA000"/>
+    </linearGradient>
+    <linearGradient id="flapGrad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#F0B500"/>
+      <stop offset="100%" stop-color="#D99B00"/>
+    </linearGradient>
+    <clipPath id="noteClip">
+      <rect x="40" y="40" width="432" height="432" rx="36" ry="36"/>
+    </clipPath>
+  </defs>
+  <!-- Main Note with Shadow -->
+  <g filter="url(#dropShadow)">
+    <path d="M 76 40 L 436 40 A 36 36 0 0 1 472 76 L 472 372 L 372 472 L 76 472 A 36 36 0 0 1 40 436 L 40 76 A 36 36 0 0 1 76 40 Z" fill="url(#bodyGrad)"/>
+    <!-- Amber Header Bar -->
+    <path d="M 76 40 L 436 40 A 36 36 0 0 1 472 76 L 472 124 L 40 124 L 40 76 A 36 36 0 0 1 76 40 Z" fill="url(#headerGrad)"/>
+    <!-- Folded Corner Flap -->
+    <path d="M 372 472 L 372 392 A 20 20 0 0 1 392 372 L 472 372 Z" fill="url(#flapGrad)"/>
+  </g>
+</svg>
