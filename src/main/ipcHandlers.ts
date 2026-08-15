@@ -18,7 +18,7 @@ export function registerIpcHandlers(
     return db.getNoteById(id);
   });
 
-  ipcMain.handle('notes:getAll', async (_event, options?: { search?: string; includeClosed?: boolean }) => {
+  ipcMain.handle('notes:getAll', async (_event, options?: { search?: string; includeClosed?: boolean; limit?: number; offset?: number }) => {
     return db.getAllNotes(options);
   });
 
