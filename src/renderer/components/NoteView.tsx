@@ -5,7 +5,6 @@ import { ColorPicker } from './ColorPicker';
 import { RichEditor } from './RichEditor';
 import { EditorToolbar } from './EditorToolbar';
 import { DeleteModal } from './DeleteModal';
-import { MANAGER_FONTS } from './FontPicker';
 
 interface NoteViewProps {
   noteId: string;
@@ -15,9 +14,6 @@ export const NoteView: React.FC<NoteViewProps> = ({ noteId }) => {
   const [note, setNote] = useState<Note | null>(null);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
-  const [fontId, setFontId] = useState<string>(() => {
-    return localStorage.getItem('app_font') || 'system';
-  });
 
   const [activeFormats, setActiveFormats] = useState({
     bold: false,
@@ -34,7 +30,7 @@ export const NoteView: React.FC<NoteViewProps> = ({ noteId }) => {
     flush: () => void;
   } | null>(null);
 
-  // Load note data on mount and sync font preferences
+  // Load note data on mount
   useEffect(() => {
     window.stickyNotesAPI.getNote(noteId).then((data) => {
       if (data) {
@@ -42,29 +38,14 @@ export const NoteView: React.FC<NoteViewProps> = ({ noteId }) => {
       }
     });
 
-    window.stickyNotesAPI.getConfig().then((config) => {
-      if (config && config.fontFamily) {
-        setFontId(config.fontFamily);
-        localStorage.setItem('app_font', config.fontFamily);
-      }
-    }).catch(() => {});
-
-    const unsubscribeNote = window.stickyNotesAPI.onNoteUpdated((updatedNote) => {
+    const unsubscribe = window.stickyNotesAPI.onNoteUpdated((updatedNote) => {
       if (updatedNote.id === noteId) {
         setNote((prev) => (prev ? { ...prev, ...updatedNote } : updatedNote));
       }
     });
 
-    const unsubscribeSettings = window.stickyNotesAPI.onSettingsChanged((key, val) => {
-      if (key === 'fontFamily') {
-        setFontId(val);
-        localStorage.setItem('app_font', val);
-      }
-    });
-
     return () => {
-      unsubscribeNote();
-      unsubscribeSettings();
+      unsubscribe();
     };
   }, [noteId]);
 
@@ -72,7 +53,6 @@ export const NoteView: React.FC<NoteViewProps> = ({ noteId }) => {
     return <div style={{ height: '100%', background: '#FFF9C4' }} />;
   }
 
-  const activeFont = MANAGER_FONTS.find((f) => f.id === fontId) || MANAGER_FONTS[0];
   const themeDef = NOTE_COLORS[note.color] || NOTE_COLORS.yellow;
   const isDark = note.color === 'charcoal'; // or match system theme
   const currentTheme = isDark ? themeDef.dark : themeDef.light;
@@ -118,8 +98,6 @@ export const NoteView: React.FC<NoteViewProps> = ({ noteId }) => {
           backgroundColor: currentTheme.body,
           color: currentTheme.text,
           borderColor: currentTheme.border,
-          fontFamily: activeFont.fontFamily,
-          '--note-font-family': activeFont.fontFamily,
           '--theme-border': currentTheme.border,
           '--theme-header-border': currentTheme.headerBorder,
           '--theme-btn-hover': currentTheme.buttonHover,
