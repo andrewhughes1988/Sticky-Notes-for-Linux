@@ -20,6 +20,7 @@ export const NoteView: React.FC<NoteViewProps> = ({ noteId }) => {
     underline: false,
     strike: false,
     list: false,
+    checklist: false,
   });
 
   const editorApiRef = useRef<{

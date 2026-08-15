@@ -9,6 +9,7 @@ interface EditorToolbarProps {
     underline: boolean;
     strike: boolean;
     list: boolean;
+    checklist: boolean;
   };
   onInsertChecklist: () => void;
 }
@@ -82,7 +83,7 @@ export const EditorToolbar: React.FC<EditorToolbarProps> = ({
 
       <button
         type="button"
-        className="toolbar-btn"
+        className={`toolbar-btn ${activeFormats.checklist ? 'active' : ''}`}
         title="Task List / Checklist"
         onMouseDown={(e) => {
           e.preventDefault();

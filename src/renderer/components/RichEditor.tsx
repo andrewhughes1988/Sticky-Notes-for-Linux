@@ -11,6 +11,7 @@ interface RichEditorProps {
     underline: boolean;
     strike: boolean;
     list: boolean;
+    checklist: boolean;
   }) => void;
   editorRefExpose?: (api: {
     format: (command: string, value?: string) => void;
@@ -41,6 +42,18 @@ export const RichEditor: React.FC<RichEditorProps> = ({
     return null;
   };
 
+  // Helper to find parent list item (li)
+  const getParentListItem = (node: Node | null): HTMLElement | null => {
+    let curr: Node | null = node;
+    while (curr && curr !== editorRef.current) {
+      if (curr instanceof HTMLElement && curr.tagName.toLowerCase() === 'li') {
+        return curr;
+      }
+      curr = curr.parentNode;
+    }
+    return null;
+  };
+
   // Helper to find top-level block inside the editor
   const getParentBlock = (node: Node | null): HTMLElement | null => {
     let curr: Node | null = node;
@@ -57,28 +70,82 @@ export const RichEditor: React.FC<RichEditorProps> = ({
   const checkFormats = useCallback(() => {
     if (!onFormatChange) return;
     try {
+      const selection = window.getSelection();
+      const inChecklist = Boolean(
+        selection && selection.anchorNode && getParentChecklistItem(selection.anchorNode)
+      );
+      const inBulletList = !inChecklist && Boolean(
+        selection && selection.anchorNode && getParentListItem(selection.anchorNode)
+      );
+
       onFormatChange({
         bold: document.queryCommandState('bold'),
         italic: document.queryCommandState('italic'),
         underline: document.queryCommandState('underline'),
         strike: document.queryCommandState('strikeThrough'),
-        list: document.queryCommandState('insertUnorderedList'),
+        list: inBulletList,
+        checklist: inChecklist,
       });
     } catch {
       // Ignore
     }
   }, [onFormatChange]);
 
-  // Execute formatting command
+  const handleContentChange = useCallback(() => {
+    if (!editorRef.current || isComposing) return;
+
+    if (debounceTimerRef.current) {
+      clearTimeout(debounceTimerRef.current);
+    }
+
+    debounceTimerRef.current = setTimeout(() => {
+      if (!editorRef.current) return;
+      const html = editorRef.current.innerHTML;
+      const plain = editorRef.current.innerText || '';
+      onChange(html, plain);
+    }, 300);
+  }, [isComposing, onChange]);
+
+  // Execute formatting command with mutual exclusivity between Checklist and Bullet list
   const format = useCallback(
     (command: string, value: string = '') => {
       if (!editorRef.current) return;
       editorRef.current.focus();
+
+      const selection = window.getSelection();
+
+      if (command === 'insertUnorderedList' && selection && selection.rangeCount > 0) {
+        const checklistItem = getParentChecklistItem(selection.anchorNode);
+        if (checklistItem) {
+          // Mutually exclusive: convert Checklist item directly to a Bullet List
+          const textSpan = (checklistItem.querySelector('.checklist-text') || checklistItem.querySelector('span')) as HTMLElement | null;
+          const innerHtml = textSpan ? textSpan.innerHTML : checklistItem.innerText;
+          const cleanHtml = innerHtml.trim() === '' || innerHtml === '&nbsp;' ? '<br>' : innerHtml;
+
+          const ul = document.createElement('ul');
+          const li = document.createElement('li');
+          li.innerHTML = cleanHtml;
+          ul.appendChild(li);
+
+          checklistItem.parentNode?.replaceChild(ul, checklistItem);
+
+          const newRange = document.createRange();
+          newRange.selectNodeContents(li);
+          newRange.collapse(false);
+          selection.removeAllRanges();
+          selection.addRange(newRange);
+
+          checkFormats();
+          handleContentChange();
+          return;
+        }
+      }
+
       document.execCommand(command, false, value);
       checkFormats();
       handleContentChange();
     },
-    [checkFormats]
+    [checkFormats, handleContentChange]
   );
 
   // Toggle or insert an interactive checklist item
@@ -90,11 +157,45 @@ export const RichEditor: React.FC<RichEditorProps> = ({
     if (!selection || selection.rangeCount === 0) return;
 
     const range = selection.getRangeAt(0);
-    const existingChecklist = getParentChecklistItem(selection.anchorNode);
 
+    // 1. If inside a bullet list (li), convert Bullet List to Checklist (mutually exclusive)
+    const existingLi = getParentListItem(selection.anchorNode);
+    if (existingLi) {
+      const parentUl = existingLi.closest('ul, ol');
+      const innerHtml = existingLi.innerHTML.trim();
+      const cleanHtml = innerHtml === '' || innerHtml === '<br>' ? '&nbsp;' : innerHtml;
+
+      const checklistDiv = document.createElement('div');
+      checklistDiv.className = 'checklist-item';
+      checklistDiv.innerHTML = `<input type="checkbox" class="checklist-checkbox" contenteditable="false" /><span class="checklist-text">${cleanHtml}</span>`;
+
+      if (parentUl && parentUl.children.length === 1) {
+        // Only 1 list item in UL: replace entire UL
+        parentUl.parentNode?.replaceChild(checklistDiv, parentUl);
+      } else if (parentUl) {
+        // Multiple items in UL: insert checklist and remove this LI
+        parentUl.parentNode?.insertBefore(checklistDiv, parentUl.nextSibling);
+        existingLi.remove();
+      }
+
+      const span = checklistDiv.querySelector('.checklist-text');
+      if (span) {
+        const newRange = document.createRange();
+        newRange.selectNodeContents(span);
+        newRange.collapse(false);
+        selection.removeAllRanges();
+        selection.addRange(newRange);
+      }
+
+      checkFormats();
+      handleContentChange();
+      return;
+    }
+
+    // 2. If already inside a checklist item: toggle OFF back to normal paragraph
+    const existingChecklist = getParentChecklistItem(selection.anchorNode);
     if (existingChecklist) {
-      // Toggle OFF: Convert checklist item back to normal div line
-      const textSpan = existingChecklist.querySelector('.checklist-text') || existingChecklist.querySelector('span');
+      const textSpan = (existingChecklist.querySelector('.checklist-text') || existingChecklist.querySelector('span')) as HTMLElement | null;
       const innerHtml = textSpan ? textSpan.innerHTML : existingChecklist.innerText;
       const normalDiv = document.createElement('div');
       normalDiv.innerHTML = innerHtml.trim() === '' || innerHtml === '&nbsp;' ? '<br>' : innerHtml;
@@ -106,40 +207,44 @@ export const RichEditor: React.FC<RichEditorProps> = ({
       newRange.collapse(false);
       selection.removeAllRanges();
       selection.addRange(newRange);
-    } else {
-      // Toggle ON: Convert current line/block into a single checklist item
-      const parentBlock = getParentBlock(selection.anchorNode);
-      let contentHtml = '';
 
-      const checklistDiv = document.createElement('div');
-      checklistDiv.className = 'checklist-item';
-
-      if (parentBlock && parentBlock !== editorRef.current) {
-        contentHtml = parentBlock.innerHTML.replace(/<br\s*[\/]?>/gi, '').trim();
-        checklistDiv.innerHTML = `<input type="checkbox" class="checklist-checkbox" contenteditable="false" /><span class="checklist-text">${contentHtml || '&nbsp;'}</span>`;
-        parentBlock.parentNode?.replaceChild(checklistDiv, parentBlock);
-      } else {
-        const selectedHtml = range.extractContents();
-        const tempDiv = document.createElement('div');
-        tempDiv.appendChild(selectedHtml);
-        contentHtml = tempDiv.innerHTML.replace(/<br\s*[\/]?>/gi, '').trim();
-        checklistDiv.innerHTML = `<input type="checkbox" class="checklist-checkbox" contenteditable="false" /><span class="checklist-text">${contentHtml || '&nbsp;'}</span>`;
-        range.insertNode(checklistDiv);
-      }
-
-      const span = checklistDiv.querySelector('.checklist-text');
-      if (span) {
-        const newRange = document.createRange();
-        newRange.selectNodeContents(span);
-        newRange.collapse(false);
-        selection.removeAllRanges();
-        selection.addRange(newRange);
-      }
+      checkFormats();
+      handleContentChange();
+      return;
     }
 
-    handleContentChange();
+    // 3. Normal line: convert to single Checklist item
+    const parentBlock = getParentBlock(selection.anchorNode);
+    let contentHtml = '';
+
+    const checklistDiv = document.createElement('div');
+    checklistDiv.className = 'checklist-item';
+
+    if (parentBlock && parentBlock !== editorRef.current) {
+      contentHtml = parentBlock.innerHTML.replace(/<br\s*[\/]?>/gi, '').trim();
+      checklistDiv.innerHTML = `<input type="checkbox" class="checklist-checkbox" contenteditable="false" /><span class="checklist-text">${contentHtml || '&nbsp;'}</span>`;
+      parentBlock.parentNode?.replaceChild(checklistDiv, parentBlock);
+    } else {
+      const selectedHtml = range.extractContents();
+      const tempDiv = document.createElement('div');
+      tempDiv.appendChild(selectedHtml);
+      contentHtml = tempDiv.innerHTML.replace(/<br\s*[\/]?>/gi, '').trim();
+      checklistDiv.innerHTML = `<input type="checkbox" class="checklist-checkbox" contenteditable="false" /><span class="checklist-text">${contentHtml || '&nbsp;'}</span>`;
+      range.insertNode(checklistDiv);
+    }
+
+    const span = checklistDiv.querySelector('.checklist-text');
+    if (span) {
+      const newRange = document.createRange();
+      newRange.selectNodeContents(span);
+      newRange.collapse(false);
+      selection.removeAllRanges();
+      selection.addRange(newRange);
+    }
+
     checkFormats();
-  }, [checkFormats]);
+    handleContentChange();
+  }, [checkFormats, handleContentChange]);
 
   // Expose formatting APIs to parent
   useEffect(() => {
@@ -157,21 +262,6 @@ export const RichEditor: React.FC<RichEditorProps> = ({
       }
     }
   }, []);
-
-  const handleContentChange = () => {
-    if (!editorRef.current || isComposing) return;
-
-    if (debounceTimerRef.current) {
-      clearTimeout(debounceTimerRef.current);
-    }
-
-    debounceTimerRef.current = setTimeout(() => {
-      if (!editorRef.current) return;
-      const html = editorRef.current.innerHTML;
-      const plain = editorRef.current.innerText || '';
-      onChange(html, plain);
-    }, 300);
-  };
 
   // Keyboard listener for shortcuts and checklist enter/backspace handling
   const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
@@ -239,6 +329,7 @@ export const RichEditor: React.FC<RichEditorProps> = ({
             }
           }
           handleContentChange();
+          checkFormats();
           return;
         }
       }
@@ -250,7 +341,7 @@ export const RichEditor: React.FC<RichEditorProps> = ({
       if (selection && selection.rangeCount > 0 && selection.isCollapsed) {
         const checklistItem = getParentChecklistItem(selection.anchorNode);
         if (checklistItem) {
-          const textSpan = checklistItem.querySelector('.checklist-text') || checklistItem.querySelector('span');
+          const textSpan = (checklistItem.querySelector('.checklist-text') || checklistItem.querySelector('span')) as HTMLElement | null;
           const range = selection.getRangeAt(0);
           if (range.startOffset === 0 && (selection.anchorNode === textSpan || selection.anchorNode === textSpan?.firstChild)) {
             e.preventDefault();
@@ -265,6 +356,7 @@ export const RichEditor: React.FC<RichEditorProps> = ({
             selection.removeAllRanges();
             selection.addRange(newRange);
             handleContentChange();
+            checkFormats();
             return;
           }
         }
