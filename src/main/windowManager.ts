@@ -344,10 +344,28 @@ export class WindowManager {
     }
   }
 
+  private broadcastTimers: Map<string, NodeJS.Timeout> = new Map();
+
   /**
-   * Broadcast an event to all open renderer windows
+   * Broadcast an event to all open renderer windows (throttled for rapid change events)
    */
   public broadcast(channel: string, ...args: any[]): void {
+    if (channel === 'notes:changed') {
+      const existing = this.broadcastTimers.get(channel);
+      if (existing) clearTimeout(existing);
+
+      const timer = setTimeout(() => {
+        this.broadcastTimers.delete(channel);
+        this.emitBroadcast(channel, ...args);
+      }, 50);
+      this.broadcastTimers.set(channel, timer);
+      return;
+    }
+
+    this.emitBroadcast(channel, ...args);
+  }
+
+  private emitBroadcast(channel: string, ...args: any[]): void {
     if (this.managerWindow && !this.managerWindow.isDestroyed()) {
       this.managerWindow.webContents.send(channel, ...args);
     }
