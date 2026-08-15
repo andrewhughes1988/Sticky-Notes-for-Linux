@@ -596,7 +596,7 @@ html, body, #root {
 
 /* Note Preview Card */
 .note-card {
-  border-radius: var(--radius-md);
+  border-radius: 2px;
   padding: 12px 14px;
   cursor: pointer;
   position: relative;
