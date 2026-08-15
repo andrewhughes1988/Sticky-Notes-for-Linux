@@ -25,18 +25,15 @@ export const PinIcon: React.FC<PinIconProps> = ({
       strokeLinejoin="round"
       className={className}
       style={{
-        transform: isPinned ? 'rotate(0deg)' : 'rotate(45deg)',
-        transition: 'transform 0.18s cubic-bezier(0.4, 0, 0.2, 1), fill 0.18s ease, opacity 0.18s ease',
-        transformOrigin: 'center center',
         display: 'inline-block',
         verticalAlign: 'middle',
         ...style,
       }}
     >
-      {/* Classic Flat Pushpin: Top Cap + Hourglass Neck + Base Collar + Needle Point */}
-      <path d="M7 4h10" />
-      <path d="M8 4v2a3 3 0 0 0 1.2 2.4L10 9.2a3 3 0 0 1 .8 2v1.8H5.5a1 1 0 0 0-1 1v1h15v-1a1 1 0 0 0-1-1H13.2v-1.8a3 3 0 0 1 .8-2l.8-.8A3 3 0 0 0 16 6V4" />
-      <line x1="12" y1="15" x2="12" y2="21" stroke="currentColor" fill="none" strokeWidth="2" />
+      {/* Classic Flat Pushpin Body */}
+      <path d="M16 3l5 5-2 2-1-1-4 4 1 1-1.5 1.5-7-7L9 7l1 1 4-4-1-1 2-2z" />
+      {/* Sharp Needle Point */}
+      <line x1="8.5" y1="15.5" x2="3" y2="21" stroke="currentColor" fill="none" strokeWidth="2.2" />
     </svg>
   );
 };
