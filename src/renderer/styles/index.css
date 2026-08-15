@@ -600,7 +600,7 @@ html, body, #root {
   padding: 12px 14px;
   cursor: pointer;
   position: relative;
-  transition: transform 0.12s ease, box-shadow 0.12s ease;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
   box-shadow: var(--shadow-card);
   border: 1px solid rgba(0, 0, 0, 0.06);
   display: flex;
@@ -610,7 +610,7 @@ html, body, #root {
 }
 
 .note-card:hover {
-  transform: translateY(-1px);
+  transform: none;
   box-shadow: var(--shadow-card-hover);
 }
 
