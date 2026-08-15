@@ -105,7 +105,7 @@ export const ManagerView: React.FC = () => {
       {/* Top Header Bar */}
       <div className="manager-header app-drag-region">
         <div className="manager-title">
-          <FileText size={16} color="#0078D4" />
+          <img src="/icon.png" alt="Sticky Notes" style={{ width: 18, height: 18, borderRadius: 3 }} />
           <span>Sticky Notes</span>
         </div>
 

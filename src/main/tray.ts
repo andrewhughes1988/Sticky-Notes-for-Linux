@@ -1,4 +1,6 @@
 import { Tray, Menu, nativeImage, app } from 'electron';
+import path from 'node:path';
+import fs from 'node:fs';
 import { WindowManager } from './windowManager';
 
 export class TrayService {
@@ -63,7 +65,13 @@ export class TrayService {
   }
 
   private createTrayIcon(): Electron.NativeImage {
-    // 22x22 SVG icon representing a yellow sticky note with a folded bottom-right corner
+    const trayIconPath = path.join(__dirname, '../../build/tray-icon.png');
+    if (fs.existsSync(trayIconPath)) {
+      const img = nativeImage.createFromPath(trayIconPath);
+      return img.resize({ width: 22, height: 22 });
+    }
+
+    // Fallback vector icon
     const svgString = `
       <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 22 22">
         <rect x="2" y="2" width="18" height="18" rx="3" fill="#FFD600" />

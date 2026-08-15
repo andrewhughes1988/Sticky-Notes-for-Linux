@@ -8,6 +8,7 @@ export class WindowManager {
   private managerWindow: BrowserWindow | null = null;
   private db: DatabaseService;
   private preloadPath: string;
+  private iconPath: string;
   private isDev: boolean;
   private devServerUrl: string;
 
@@ -16,6 +17,7 @@ export class WindowManager {
     this.isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
     this.devServerUrl = process.env.VITE_DEV_SERVER_URL || 'http://localhost:5173';
     this.preloadPath = path.join(__dirname, '../preload/preload.js');
+    this.iconPath = path.join(__dirname, '../../build/icon.png');
   }
 
   /**
@@ -112,6 +114,7 @@ export class WindowManager {
       x: note.pos_x !== null ? note.pos_x : undefined,
       y: note.pos_y !== null ? note.pos_y : undefined,
       frame: false, // Frameless for exact Windows Sticky Notes styling
+      icon: this.iconPath,
       hasShadow: true,
       backgroundColor: themeDef.light.body,
       alwaysOnTop: note.is_pinned === 1,
@@ -227,6 +230,7 @@ export class WindowManager {
       minHeight: 450,
       frame: false,
       title: 'Sticky Notes',
+      icon: this.iconPath,
       backgroundColor: '#202020',
       webPreferences: {
         preload: this.preloadPath,
