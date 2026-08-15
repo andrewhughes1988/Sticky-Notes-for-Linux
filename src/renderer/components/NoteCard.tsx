@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Note, NOTE_COLORS } from '../../shared/types';
 import { formatFriendlyDate } from '../utils/date';
-import { Trash2, ExternalLink } from 'lucide-react';
+import { Trash2 } from 'lucide-react';
 
 interface NoteCardProps {
   note: Note;
@@ -54,21 +54,11 @@ export const NoteCard: React.FC<NoteCardProps> = ({ note, onOpen, onDelete }) =>
       <div className="note-card-actions app-no-drag" onClick={(e) => e.stopPropagation()}>
         <button
           type="button"
-          className="card-action-btn"
-          title="Open note on desktop"
-          onClick={() => onOpen(note.id)}
-        >
-          <ExternalLink size={12} />
-          <span>Open</span>
-        </button>
-
-        <button
-          type="button"
           className="card-action-btn delete"
           title="Delete note"
           onClick={() => onDelete(note.id)}
         >
-          <Trash2 size={12} />
+          <Trash2 size={13} />
           <span>Delete</span>
         </button>
       </div>
