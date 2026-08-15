@@ -1,5 +1,6 @@
 import React from 'react';
-import { Plus, MoreHorizontal, X, Pin } from 'lucide-react';
+import { Plus, MoreHorizontal, X } from 'lucide-react';
+import { PinIcon } from './PinIcon';
 
 interface NoteHeaderProps {
   isPinned: boolean;
@@ -42,7 +43,7 @@ export const NoteHeader: React.FC<NoteHeaderProps> = ({
           style={{ opacity: isPinned ? 1 : 0.7 }}
           onClick={onTogglePin}
         >
-          <Pin size={14} style={{ transform: isPinned ? 'rotate(45deg)' : 'none' }} />
+          <PinIcon isPinned={isPinned} size={15} />
         </button>
 
         <button
