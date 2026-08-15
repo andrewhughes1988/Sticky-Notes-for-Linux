@@ -636,6 +636,9 @@ html, body, #root {
   gap: 6px;
   min-height: 68px;
   user-select: none;
+  /* Performance: skip rendering off-screen cards until scrolled into view */
+  content-visibility: auto;
+  contain-intrinsic-size: 80px;
 }
 
 .note-card:hover {

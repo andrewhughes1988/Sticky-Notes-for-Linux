@@ -51,6 +51,7 @@ export class DatabaseService {
       this.db.pragma('journal_mode = WAL');
       this.db.pragma('synchronous = NORMAL');
       this.db.pragma('foreign_keys = ON');
+      this.db.pragma('wal_autocheckpoint = 1000');
 
       // Fast, lightweight verification (stops after 1 error, sub-millisecond)
       const quickCheck = this.db.pragma('quick_check(1)') as [{ quick_check: string }] | undefined;
@@ -380,6 +381,12 @@ export class DatabaseService {
   }
 
   public close(): void {
+    // Checkpoint WAL before closing to merge -wal file back into main database
+    try {
+      this.db.pragma('wal_checkpoint(PASSIVE)');
+    } catch {
+      // Ignore checkpoint errors on close
+    }
     this.db.close();
   }
 }
