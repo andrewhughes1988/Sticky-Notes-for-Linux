@@ -111,7 +111,9 @@ export const ManagerView: React.FC = () => {
 
   const handleConfirmDelete = useCallback(() => {
     if (noteToDelete) {
-      window.stickyNotesAPI.deleteNote(noteToDelete);
+      const id = noteToDelete;
+      setNotes((prev) => prev.filter((n) => n.id !== id));
+      window.stickyNotesAPI.deleteNote(id);
       setNoteToDelete(null);
     }
   }, [noteToDelete]);
