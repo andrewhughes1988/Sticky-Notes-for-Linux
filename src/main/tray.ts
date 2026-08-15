@@ -6,6 +6,7 @@ import { WindowManager } from './windowManager';
 export class TrayService {
   private tray: Tray | null = null;
   private windowManager: WindowManager;
+  private cachedIcon: Electron.NativeImage | null = null;
 
   constructor(windowManager: WindowManager) {
     this.windowManager = windowManager;
@@ -65,10 +66,15 @@ export class TrayService {
   }
 
   private createTrayIcon(): Electron.NativeImage {
+    if (this.cachedIcon) {
+      return this.cachedIcon;
+    }
+
     const trayIconPath = path.join(__dirname, '../../build/tray-icon.png');
     if (fs.existsSync(trayIconPath)) {
       const img = nativeImage.createFromPath(trayIconPath);
-      return img.resize({ width: 22, height: 22 });
+      this.cachedIcon = img.resize({ width: 22, height: 22 });
+      return this.cachedIcon;
     }
 
     // Fallback vector icon
@@ -83,7 +89,8 @@ export class TrayService {
     `;
     const base64 = Buffer.from(svgString).toString('base64');
     const image = nativeImage.createFromDataURL(`data:image/svg+xml;base64,${base64}`);
-    return image.resize({ width: 20, height: 20 });
+    this.cachedIcon = image.resize({ width: 20, height: 20 });
+    return this.cachedIcon;
   }
 
   public destroy(): void {
