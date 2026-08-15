@@ -211,8 +211,9 @@ export class DatabaseService {
     return stmt.all() as Note[];
   }
 
-  public getAllNotes(options: { search?: string; includeClosed?: boolean } = {}): Note[] {
-    const { search, includeClosed = true } = options;
+  public getAllNotes(options: { search?: string; includeClosed?: boolean; limit?: number; offset?: number } = {}): Note[] {
+    const { search, includeClosed = true, limit, offset = 0 } = options;
+    const limitClause = limit && limit > 0 ? `LIMIT ${Math.max(1, Math.floor(limit))} OFFSET ${Math.max(0, Math.floor(offset))}` : '';
 
     if (search && search.trim().length > 0) {
       const cleanQuery = search.trim().replace(/["*]/g, '');
@@ -225,6 +226,7 @@ export class DatabaseService {
           WHERE notes.deleted_at IS NULL ${openFilter}
             AND notes_fts MATCH ?
           ORDER BY notes.updated_at DESC
+          ${limitClause}
         `;
         const stmt = this.db.prepare(query);
         return stmt.all(`"${cleanQuery}"*`) as Note[];
@@ -235,6 +237,7 @@ export class DatabaseService {
           WHERE deleted_at IS NULL ${openFilter}
             AND (content_plain LIKE ? OR title LIKE ?)
           ORDER BY updated_at DESC
+          ${limitClause}
         `;
         const stmt = this.db.prepare(fallbackQuery);
         const term = `%${cleanQuery}%`;
@@ -247,6 +250,7 @@ export class DatabaseService {
       SELECT * FROM notes
       WHERE deleted_at IS NULL ${openFilter}
       ORDER BY updated_at DESC
+      ${limitClause}
     `);
     return stmt.all() as Note[];
   }

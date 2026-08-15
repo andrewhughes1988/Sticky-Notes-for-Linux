@@ -75,6 +75,22 @@ if (deleted !== null) {
   throw new Error('Soft delete test failed!');
 }
 
+// 8. Test Pagination (LIMIT & OFFSET)
+for (let i = 0; i < 5; i++) {
+  dbService.createNote({
+    title: `Pagination Note ${i}`,
+    content_plain: `Content ${i}`,
+    color: 'yellow',
+  });
+}
+const page1 = dbService.getAllNotes({ limit: 2, offset: 0 });
+console.log('Pagination page 1 count (should be 2):', page1.length);
+if (page1.length !== 2) throw new Error('Pagination page 1 failed!');
+
+const page2 = dbService.getAllNotes({ limit: 2, offset: 2 });
+console.log('Pagination page 2 count (should be 2):', page2.length);
+if (page2.length !== 2 || page2[0].id === page1[0].id) throw new Error('Pagination page 2 failed!');
+
 // Clean up
 dbService.deleteNote(note2.id, true);
 dbService.deleteNote(note1.id, true);

@@ -302,7 +302,7 @@ export interface StickyNotesAPI {
   // Note Operations
   createNote: (initial?: Partial<Note>) => Promise<Note>;
   getNote: (id: string) => Promise<Note | null>;
-  getAllNotes: (query?: { search?: string; includeClosed?: boolean }) => Promise<Note[]>;
+  getAllNotes: (query?: { search?: string; includeClosed?: boolean; limit?: number; offset?: number }) => Promise<Note[]>;
   updateNote: (id: string, updates: Partial<Note>) => Promise<Note>;
   closeNoteWindow: (id: string) => Promise<void>;
   openNoteWindow: (id: string) => Promise<void>;
