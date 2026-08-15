@@ -9,7 +9,7 @@ export function sanitizeHtml(rawHtml: string): string {
       'ul', 'ol', 'li',
       'a', 'input', 'label'
     ],
-    ALLOWED_ATTR: ['href', 'target', 'rel', 'class', 'type', 'checked', 'data-checked'],
+    ALLOWED_ATTR: ['href', 'target', 'rel', 'class', 'type', 'checked', 'data-checked', 'contenteditable'],
     ALLOWED_URI_REGEXP: /^(?:(?:(?:f|ht)tps?|mailto):|[^a-z]|[a-z+.\-]+(?:[^a-z+.\-:]|$))/i,
   });
 }
