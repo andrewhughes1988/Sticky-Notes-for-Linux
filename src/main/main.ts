@@ -67,6 +67,20 @@ if (!gotTheLock) {
     // On Linux desktop, app stays active in tray
   });
 
+  const handleGracefulShutdown = () => {
+    try {
+      if (windowManager) windowManager.flushAllOpenNoteBounds();
+      if (trayService) trayService.destroy();
+      if (db) db.close();
+    } catch {
+      // Ignore
+    }
+    app.exit(0);
+  };
+
+  process.on('SIGTERM', handleGracefulShutdown);
+  process.on('SIGINT', handleGracefulShutdown);
+
   app.on('before-quit', () => {
     if (windowManager) windowManager.flushAllOpenNoteBounds();
     if (trayService) trayService.destroy();
