@@ -34,7 +34,10 @@ export const RichEditor: React.FC<RichEditorProps> = ({
 
   // Helper to extract clean plain text without forcing synchronous style/layout reflows
   const extractPlainText = (element: HTMLElement): string => {
-    return (element.textContent || '').replace(/\u00a0/g, ' ').trim();
+    return (element.textContent || '')
+      .replace(/\u200B/g, '')
+      .replace(/\u00a0/g, ' ')
+      .trim();
   };
 
   // Immediate save flush for pending dirty edits
@@ -86,6 +89,41 @@ export const RichEditor: React.FC<RichEditorProps> = ({
     return curr instanceof HTMLElement ? curr : null;
   };
 
+  // Helper to check if an element matches a formatting command
+  const isTagMatchingCommand = (el: HTMLElement, command: string): boolean => {
+    const tagName = el.tagName.toLowerCase();
+    const style = el.style;
+    const textDec = (style.textDecoration || style.textDecorationLine || '').toLowerCase();
+
+    switch (command.toLowerCase()) {
+      case 'bold':
+        return tagName === 'b' || tagName === 'strong' || style.fontWeight === 'bold' || parseInt(style.fontWeight || '0', 10) >= 700;
+      case 'italic':
+        return tagName === 'i' || tagName === 'em' || style.fontStyle === 'italic';
+      case 'underline':
+        return tagName === 'u' || textDec.includes('underline');
+      case 'strikethrough':
+        return tagName === 's' || tagName === 'strike' || tagName === 'del' || textDec.includes('line-through');
+      default:
+        return false;
+    }
+  };
+
+  // Helper to find closest formatting tag for a command
+  const findFormattingTag = (node: Node | null, command: string): HTMLElement | null => {
+    let curr: Node | null = node;
+    while (curr && curr !== editorRef.current) {
+      if (curr.nodeType === Node.ELEMENT_NODE) {
+        const el = curr as HTMLElement;
+        if (isTagMatchingCommand(el, command)) {
+          return el;
+        }
+      }
+      curr = curr.parentNode;
+    }
+    return null;
+  };
+
   // Update format states on selection change
   const checkFormats = useCallback(() => {
     if (!onFormatChange) return;
@@ -98,11 +136,33 @@ export const RichEditor: React.FC<RichEditorProps> = ({
         selection && selection.anchorNode && getParentListItem(selection.anchorNode)
       );
 
+      const isAnchorEscaped = selection && selection.anchorNode && selection.anchorNode.textContent === '\u200B';
+
+      const isUnderline = !isAnchorEscaped && (
+        document.queryCommandState('underline') ||
+        Boolean(selection?.anchorNode && findFormattingTag(selection.anchorNode, 'underline'))
+      );
+
+      const isStrike = !isAnchorEscaped && (
+        document.queryCommandState('strikeThrough') ||
+        Boolean(selection?.anchorNode && findFormattingTag(selection.anchorNode, 'strikeThrough'))
+      );
+
+      const isBold = !isAnchorEscaped && (
+        document.queryCommandState('bold') ||
+        Boolean(selection?.anchorNode && findFormattingTag(selection.anchorNode, 'bold'))
+      );
+
+      const isItalic = !isAnchorEscaped && (
+        document.queryCommandState('italic') ||
+        Boolean(selection?.anchorNode && findFormattingTag(selection.anchorNode, 'italic'))
+      );
+
       onFormatChange({
-        bold: document.queryCommandState('bold'),
-        italic: document.queryCommandState('italic'),
-        underline: document.queryCommandState('underline'),
-        strike: document.queryCommandState('strikeThrough'),
+        bold: isBold,
+        italic: isItalic,
+        underline: isUnderline,
+        strike: isStrike,
         list: inBulletList,
         checklist: inChecklist,
       });
@@ -160,6 +220,87 @@ export const RichEditor: React.FC<RichEditorProps> = ({
           checkFormats();
           handleContentChange();
           return;
+        }
+      }
+
+      // Handle collapsed caret formatting (toggle ON/OFF when no text is selected)
+      if (selection && selection.rangeCount > 0 && selection.isCollapsed) {
+        const activeTag = findFormattingTag(selection.anchorNode, command);
+        let isCmdActive = false;
+        try {
+          isCmdActive = document.queryCommandState(command);
+        } catch {}
+
+        if (activeTag || isCmdActive) {
+          // Untoggle requested on a collapsed selection
+          if (activeTag) {
+            const rawContent = (activeTag.textContent || '').replace(/\u200B/g, '').trim();
+            if (rawContent === '' || activeTag.innerHTML === '<br>' || activeTag.innerHTML === '&nbsp;') {
+              // Empty formatting tag (e.g. <u>&#8203;</u> or <u><br></u>): replace with clean <br>
+              const parent = activeTag.parentNode;
+              if (parent) {
+                const br = document.createElement('br');
+                parent.replaceChild(br, activeTag);
+                const newRange = document.createRange();
+                newRange.setStartBefore(br);
+                newRange.collapse(true);
+                selection.removeAllRanges();
+                selection.addRange(newRange);
+              }
+            } else {
+              // Tag has text: escape outside of tag with a zero-width space
+              const textNode = document.createTextNode('\u200B');
+              if (activeTag.nextSibling) {
+                activeTag.parentNode?.insertBefore(textNode, activeTag.nextSibling);
+              } else {
+                activeTag.parentNode?.appendChild(textNode);
+              }
+              const newRange = document.createRange();
+              newRange.setStart(textNode, 1);
+              newRange.collapse(true);
+              selection.removeAllRanges();
+              selection.addRange(newRange);
+            }
+            checkFormats();
+            handleContentChange();
+            return;
+          } else {
+            document.execCommand(command, false, value);
+            checkFormats();
+            handleContentChange();
+            return;
+          }
+        } else {
+          // Toggle ON requested on collapsed caret
+          const isEditorEmpty = !editorRef.current.textContent || editorRef.current.textContent.trim() === '';
+          if (isEditorEmpty) {
+            let tagName = 'span';
+            if (command === 'underline') tagName = 'u';
+            else if (command === 'strikeThrough') tagName = 's';
+            else if (command === 'bold') tagName = 'b';
+            else if (command === 'italic') tagName = 'i';
+
+            const tagEl = document.createElement(tagName);
+            const textNode = document.createTextNode('\u200B');
+            tagEl.appendChild(textNode);
+            editorRef.current.innerHTML = '';
+            editorRef.current.appendChild(tagEl);
+
+            const newRange = document.createRange();
+            newRange.setStart(textNode, 1);
+            newRange.collapse(true);
+            selection.removeAllRanges();
+            selection.addRange(newRange);
+
+            checkFormats();
+            handleContentChange();
+            return;
+          } else {
+            document.execCommand(command, false, value);
+            checkFormats();
+            handleContentChange();
+            return;
+          }
         }
       }
 
