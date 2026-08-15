@@ -194,84 +194,6 @@ export const RichEditor: React.FC<RichEditorProps> = ({
     return 'none';
   };
 
-  const unwrapElement = (el: HTMLElement) => {
-    const parent = el.parentNode;
-    if (!parent) return;
-    while (el.firstChild) {
-      parent.insertBefore(el.firstChild, el);
-    }
-    parent.removeChild(el);
-  };
-
-  const cleanEmptySpan = (el: HTMLElement) => {
-    if (
-      el.tagName.toLowerCase() === 'span' &&
-      !el.getAttribute('style') &&
-      el.classList.length === 0
-    ) {
-      unwrapElement(el);
-    }
-  };
-
-  // Remove a specific format from all nodes within a range
-  const removeFormatFromRange = (range: Range, command: string, root: HTMLElement) => {
-    const key = getCommandKey(command);
-    const textNodes = getTextNodesInRange(range, root);
-
-    for (const textNode of textNodes) {
-      let curr: Node | null = textNode.parentNode;
-      while (curr && curr !== root) {
-        if (curr.nodeType === Node.ELEMENT_NODE) {
-          const el = curr as HTMLElement;
-          const tag = el.tagName.toLowerCase();
-
-          if (key === 'underline') {
-            if (tag === 'u') {
-              unwrapElement(el);
-            } else if (el.style.textDecoration || el.style.textDecorationLine) {
-              const currentDec = el.style.textDecoration || el.style.textDecorationLine || '';
-              const newDec = currentDec.replace(/underline/gi, '').trim();
-              if (newDec) {
-                el.style.textDecoration = newDec;
-              } else {
-                el.style.textDecoration = '';
-                cleanEmptySpan(el);
-              }
-            }
-          } else if (key === 'strike') {
-            if (tag === 's' || tag === 'strike' || tag === 'del') {
-              unwrapElement(el);
-            } else if (el.style.textDecoration || el.style.textDecorationLine) {
-              const currentDec = el.style.textDecoration || el.style.textDecorationLine || '';
-              const newDec = currentDec.replace(/line-through/gi, '').trim();
-              if (newDec) {
-                el.style.textDecoration = newDec;
-              } else {
-                el.style.textDecoration = '';
-                cleanEmptySpan(el);
-              }
-            }
-          } else if (key === 'bold') {
-            if (tag === 'b' || tag === 'strong') {
-              unwrapElement(el);
-            } else if (el.style.fontWeight) {
-              el.style.fontWeight = '';
-              cleanEmptySpan(el);
-            }
-          } else if (key === 'italic') {
-            if (tag === 'i' || tag === 'em') {
-              unwrapElement(el);
-            } else if (el.style.fontStyle) {
-              el.style.fontStyle = '';
-              cleanEmptySpan(el);
-            }
-          }
-        }
-        curr = curr.parentNode;
-      }
-    }
-  };
-
   // Update format states on selection change
   const checkFormats = useCallback(() => {
     if (!onFormatChange || !editorRef.current) return;
@@ -391,19 +313,8 @@ export const RichEditor: React.FC<RichEditorProps> = ({
         return;
       }
 
-      // 3. Highlighted Range Selection
-      const formatState = getRangeFormatState(range, command, editorRef.current);
-      if (formatState === 'none') {
-        // Uniformly apply style to entire selection
-        document.execCommand(command, false, value);
-      } else {
-        // 'some' or 'all': Uniformly remove style from entire selection
-        const savedRange = range.cloneRange();
-        removeFormatFromRange(range, command, editorRef.current);
-        editorRef.current.normalize();
-        selection.removeAllRanges();
-        selection.addRange(savedRange);
-      }
+      // 3. Highlighted Range Selection: applies/removes strictly to/from selected characters
+      document.execCommand(command, false, value);
 
       pendingFormatsRef.current = null;
       checkFormats();
