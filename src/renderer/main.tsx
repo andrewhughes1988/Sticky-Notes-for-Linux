@@ -2,7 +2,6 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 import { NoteView } from './components/NoteView';
 import { ManagerView } from './components/ManagerView';
-import '@fontsource-variable/inter';
 import './styles/index.css';
 
 function App() {
