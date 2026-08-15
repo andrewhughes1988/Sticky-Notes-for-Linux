@@ -33,14 +33,9 @@ export const PinIcon: React.FC<PinIconProps> = ({
         ...style,
       }}
     >
-      {/* Needle Point */}
-      <line x1="12" y1="17" x2="12" y2="22" strokeWidth="2" stroke="currentColor" fill="none" />
-      {/* Thumbtack Head & Body */}
-      <path d="M9 11a3 3 0 0 1-1.2-2.3V6.5h8.4V8.7A3 3 0 0 1 15 11l-1 4H10z" />
-      {/* Collar Base */}
-      <line x1="6" y1="15" x2="18" y2="15" strokeWidth="2" stroke="currentColor" fill="none" />
-      {/* Top Cap */}
-      <line x1="7" y1="4" x2="17" y2="4" strokeWidth="2" stroke="currentColor" fill="none" />
+      {/* Modern Minimalist Pin: Clean Round Tack with Needle Point */}
+      <circle cx="12" cy="7.5" r="4.5" />
+      <line x1="12" y1="12" x2="12" y2="20.5" stroke="currentColor" fill="none" strokeWidth="2.2" />
     </svg>
   );
 };
