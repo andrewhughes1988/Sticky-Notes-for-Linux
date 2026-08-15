@@ -33,9 +33,10 @@ export const PinIcon: React.FC<PinIconProps> = ({
         ...style,
       }}
     >
-      {/* Iconic Tapered Pushpin Silhouette: Flat Cap + Tapered Neck + Needle Point */}
-      <path d="M8 4h8v2.5l-1.5 5.5h-5L8 6.5z" />
-      <line x1="12" y1="12" x2="12" y2="20.5" stroke="currentColor" fill="none" strokeWidth="2.2" />
+      {/* Classic Flat Pushpin: Top Cap + Hourglass Neck + Base Collar + Needle Point */}
+      <path d="M7 4h10" />
+      <path d="M8 4v2a3 3 0 0 0 1.2 2.4L10 9.2a3 3 0 0 1 .8 2v1.8H5.5a1 1 0 0 0-1 1v1h15v-1a1 1 0 0 0-1-1H13.2v-1.8a3 3 0 0 1 .8-2l.8-.8A3 3 0 0 0 16 6V4" />
+      <line x1="12" y1="15" x2="12" y2="21" stroke="currentColor" fill="none" strokeWidth="2" />
     </svg>
   );
 };
