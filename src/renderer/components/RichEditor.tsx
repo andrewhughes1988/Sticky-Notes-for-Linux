@@ -194,6 +194,162 @@ export const RichEditor: React.FC<RichEditorProps> = ({
     return 'none';
   };
 
+  const unwrapElement = (el: HTMLElement) => {
+    const parent = el.parentNode;
+    if (!parent) return;
+    while (el.firstChild) {
+      parent.insertBefore(el.firstChild, el);
+    }
+    parent.removeChild(el);
+  };
+
+  const cleanEmptySpan = (el: HTMLElement) => {
+    if (
+      el.tagName.toLowerCase() === 'span' &&
+      !el.getAttribute('style') &&
+      el.classList.length === 0
+    ) {
+      unwrapElement(el);
+    }
+  };
+
+  const isolateElementAroundNode = (node: Node, el: HTMLElement) => {
+    if (!el.parentNode) return;
+    if (node.previousSibling) {
+      const leftEl = el.cloneNode(false) as HTMLElement;
+      let sibling: ChildNode | null = el.firstChild;
+      while (sibling && sibling !== node) {
+        const next: ChildNode | null = sibling.nextSibling;
+        leftEl.appendChild(sibling);
+        sibling = next;
+      }
+      if (leftEl.hasChildNodes()) {
+        el.parentNode.insertBefore(leftEl, el);
+      }
+    }
+    if (node.nextSibling) {
+      const rightEl = el.cloneNode(false) as HTMLElement;
+      let sibling: ChildNode | null = node.nextSibling;
+      while (sibling) {
+        const next: ChildNode | null = sibling.nextSibling;
+        rightEl.appendChild(sibling);
+        sibling = next;
+      }
+      if (rightEl.hasChildNodes()) {
+        el.parentNode.insertBefore(rightEl, el.nextSibling);
+      }
+    }
+  };
+
+  const applyOrRemoveRangeFormat = (range: Range, command: string, root: HTMLElement) => {
+    const key = getCommandKey(command);
+    const formatState = getRangeFormatState(range, command, root);
+    const shouldApply = (formatState === 'none');
+
+    // 1. Split start text node if inside
+    if (range.startContainer.nodeType === Node.TEXT_NODE) {
+      const textNode = range.startContainer as Text;
+      if (range.startOffset > 0 && range.startOffset < (textNode.textContent || '').length) {
+        const rightText = textNode.splitText(range.startOffset);
+        if (range.startContainer === range.endContainer) {
+          range.setEnd(rightText, range.endOffset - range.startOffset);
+        }
+        range.setStart(rightText, 0);
+      }
+    }
+
+    // 2. Split end text node if inside
+    if (range.endContainer.nodeType === Node.TEXT_NODE) {
+      const textNode = range.endContainer as Text;
+      if (range.endOffset > 0 && range.endOffset < (textNode.textContent || '').length) {
+        textNode.splitText(range.endOffset);
+      }
+    }
+
+    const textNodes = getTextNodesInRange(range, root);
+
+    for (const textNode of textNodes) {
+      const currentFormats = getDomFormatsAtNode(textNode, root);
+
+      if (shouldApply) {
+        if (!currentFormats[key]) {
+          let tagName = 'span';
+          if (key === 'bold') tagName = 'strong';
+          else if (key === 'italic') tagName = 'em';
+          else if (key === 'underline') tagName = 'u';
+          else if (key === 'strike') tagName = 's';
+
+          const wrapper = document.createElement(tagName);
+          textNode.parentNode?.insertBefore(wrapper, textNode);
+          wrapper.appendChild(textNode);
+        }
+      } else {
+        // Remove format from this textNode
+        let curr: Node = textNode;
+        while (curr && curr.parentNode !== root && curr.parentNode) {
+          const parent: Node = curr.parentNode;
+          if (parent.nodeType === Node.ELEMENT_NODE) {
+            const el = parent as HTMLElement;
+            const tag = el.tagName.toLowerCase();
+
+            if (key === 'underline') {
+              if (tag === 'u') {
+                isolateElementAroundNode(curr, el);
+                unwrapElement(el);
+                curr = curr.parentNode || parent;
+                continue;
+              } else if (el.style.textDecoration || el.style.textDecorationLine) {
+                const currentDec = el.style.textDecoration || el.style.textDecorationLine || '';
+                const newDec = currentDec.replace(/underline/gi, '').trim();
+                if (newDec) el.style.textDecoration = newDec;
+                else {
+                  el.style.textDecoration = '';
+                  cleanEmptySpan(el);
+                }
+              }
+            } else if (key === 'strike') {
+              if (tag === 's' || tag === 'strike' || tag === 'del') {
+                isolateElementAroundNode(curr, el);
+                unwrapElement(el);
+                curr = curr.parentNode || parent;
+                continue;
+              } else if (el.style.textDecoration || el.style.textDecorationLine) {
+                const currentDec = el.style.textDecoration || el.style.textDecorationLine || '';
+                const newDec = currentDec.replace(/line-through/gi, '').trim();
+                if (newDec) el.style.textDecoration = newDec;
+                else {
+                  el.style.textDecoration = '';
+                  cleanEmptySpan(el);
+                }
+              }
+            } else if (key === 'bold') {
+              if (tag === 'b' || tag === 'strong') {
+                isolateElementAroundNode(curr, el);
+                unwrapElement(el);
+                curr = curr.parentNode || parent;
+                continue;
+              } else if (el.style.fontWeight) {
+                el.style.fontWeight = '';
+                cleanEmptySpan(el);
+              }
+            } else if (key === 'italic') {
+              if (tag === 'i' || tag === 'em') {
+                isolateElementAroundNode(curr, el);
+                unwrapElement(el);
+                curr = curr.parentNode || parent;
+                continue;
+              } else if (el.style.fontStyle) {
+                el.style.fontStyle = '';
+                cleanEmptySpan(el);
+              }
+            }
+          }
+          curr = parent;
+        }
+      }
+    }
+  };
+
   // Update format states on selection change
   const checkFormats = useCallback(() => {
     if (!onFormatChange || !editorRef.current) return;
@@ -313,8 +469,12 @@ export const RichEditor: React.FC<RichEditorProps> = ({
         return;
       }
 
-      // 3. Highlighted Range Selection: applies/removes strictly to/from selected characters
-      document.execCommand(command, false, value);
+      // 3. Highlighted Range Selection: preserves independent formatting across overlapping tags
+      const savedRange = range.cloneRange();
+      applyOrRemoveRangeFormat(range, command, editorRef.current);
+      editorRef.current.normalize();
+      selection.removeAllRanges();
+      selection.addRange(savedRange);
 
       pendingFormatsRef.current = null;
       checkFormats();
