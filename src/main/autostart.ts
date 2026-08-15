@@ -26,7 +26,7 @@ export class AutostartManager {
         const execPath = process.env.APPIMAGE || process.execPath || 'sticky-notes';
         const desktopEntry = `[Desktop Entry]
 Type=Application
-Exec=${execPath} --autostart
+Exec="${execPath}" --autostart
 Hidden=false
 NoDisplay=false
 X-GNOME-Autostart-enabled=true

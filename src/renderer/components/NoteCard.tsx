@@ -9,7 +9,7 @@ interface NoteCardProps {
   onDelete: (id: string) => void;
 }
 
-export const NoteCard: React.FC<NoteCardProps> = ({ note, onOpen, onDelete }) => {
+const NoteCardComponent: React.FC<NoteCardProps> = ({ note, onOpen, onDelete }) => {
   const [isHovered, setIsHovered] = useState(false);
   const themeDef = NOTE_COLORS[note.color] || NOTE_COLORS.yellow;
   const isDark = note.color === 'charcoal';
@@ -61,7 +61,7 @@ export const NoteCard: React.FC<NoteCardProps> = ({ note, onOpen, onDelete }) =>
             title="Delete note"
             onClick={handleDeleteClick}
           >
-            <Trash2 size={13} />
+            <Trash2 size={16} />
           </button>
         </div>
       </div>
@@ -70,3 +70,5 @@ export const NoteCard: React.FC<NoteCardProps> = ({ note, onOpen, onDelete }) =>
     </div>
   );
 };
+
+export const NoteCard = React.memo(NoteCardComponent);

@@ -110,14 +110,37 @@ export class WindowManager {
   private createNoteWindow(note: Note): BrowserWindow {
     const themeDef = NOTE_COLORS[note.color] || NOTE_COLORS.yellow;
 
+    let x = note.pos_x !== null ? note.pos_x : undefined;
+    let y = note.pos_y !== null ? note.pos_y : undefined;
+
+    // Multi-monitor safety: ensure saved position is visible on an active display
+    if (x !== undefined && y !== undefined) {
+      try {
+        const displays = screen.getAllDisplays();
+        const isVisible = displays.some((d) => {
+          const b = d.bounds;
+          return x! + 50 > b.x && x! < b.x + b.width && y! + 50 > b.y && y! < b.y + b.height;
+        });
+
+        if (!isVisible) {
+          const primary = screen.getPrimaryDisplay().workArea;
+          x = primary.x + 40;
+          y = primary.y + 40;
+        }
+      } catch {
+        // Ignore and fallback
+      }
+    }
+
     const win = new BrowserWindow({
       width: note.width || 320,
       height: note.height || 340,
       minWidth: 240,
       minHeight: 200,
-      x: note.pos_x !== null ? note.pos_x : undefined,
-      y: note.pos_y !== null ? note.pos_y : undefined,
+      x,
+      y,
       frame: false, // Frameless for exact Windows Sticky Notes styling
+      maximizable: false,
       icon: this.iconPath,
       hasShadow: true,
       backgroundColor: themeDef.light.body,
@@ -151,8 +174,19 @@ export class WindowManager {
     win.on('move', saveBounds);
     win.on('resize', saveBounds);
 
-    // When the window is closed via UI, mark is_open = 0 in DB
+    // When the window is closed via UI, flush final bounds and mark is_open = 0 in DB
     win.on('close', () => {
+      if (resizeTimeout) {
+        clearTimeout(resizeTimeout);
+        resizeTimeout = null;
+      }
+      try {
+        if (!win.isDestroyed()) {
+          this.db.updateNoteBounds(note.id, win.getBounds());
+        }
+      } catch {
+        // Ignore
+      }
       this.noteWindows.delete(note.id);
       this.db.setNoteOpenState(note.id, false);
       this.broadcast('notes:changed');
@@ -233,6 +267,7 @@ export class WindowManager {
       minWidth: 340,
       minHeight: 450,
       frame: false,
+      maximizable: false,
       title: 'Sticky Notes',
       icon: this.iconPath,
       backgroundColor: '#202020',
@@ -288,6 +323,21 @@ export class WindowManager {
     for (const win of this.noteWindows.values()) {
       if (!win.isDestroyed()) {
         win.hide();
+      }
+    }
+  }
+
+  /**
+   * Synchronously persists bounds for all currently open note windows
+   */
+  public flushAllOpenNoteBounds(): void {
+    for (const [id, win] of this.noteWindows.entries()) {
+      if (!win.isDestroyed()) {
+        try {
+          this.db.updateNoteBounds(id, win.getBounds());
+        } catch {
+          // Ignore
+        }
       }
     }
   }

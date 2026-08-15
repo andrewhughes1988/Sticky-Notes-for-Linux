@@ -68,6 +68,7 @@ if (!gotTheLock) {
   });
 
   app.on('before-quit', () => {
+    if (windowManager) windowManager.flushAllOpenNoteBounds();
     if (trayService) trayService.destroy();
     if (db) db.close();
   });

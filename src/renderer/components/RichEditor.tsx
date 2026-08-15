@@ -16,6 +16,7 @@ interface RichEditorProps {
   editorRefExpose?: (api: {
     format: (command: string, value?: string) => void;
     insertChecklist: () => void;
+    flush: () => void;
   }) => void;
 }
 
@@ -29,6 +30,25 @@ export const RichEditor: React.FC<RichEditorProps> = ({
   const editorRef = useRef<HTMLDivElement>(null);
   const [isComposing, setIsComposing] = useState(false);
   const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const isDirtyRef = useRef(false);
+
+  // Helper to extract clean plain text without forcing synchronous style/layout reflows
+  const extractPlainText = (element: HTMLElement): string => {
+    return (element.textContent || '').replace(/\u00a0/g, ' ').trim();
+  };
+
+  // Immediate save flush for pending dirty edits
+  const flush = useCallback(() => {
+    if (!isDirtyRef.current || !editorRef.current) return;
+    if (debounceTimerRef.current) {
+      clearTimeout(debounceTimerRef.current);
+      debounceTimerRef.current = null;
+    }
+    isDirtyRef.current = false;
+    const html = editorRef.current.innerHTML;
+    const plain = extractPlainText(editorRef.current);
+    onChange(html, plain);
+  }, [onChange]);
 
   // Helper to find parent checklist item
   const getParentChecklistItem = (node: Node | null): HTMLElement | null => {
@@ -93,6 +113,7 @@ export const RichEditor: React.FC<RichEditorProps> = ({
 
   const handleContentChange = useCallback(() => {
     if (!editorRef.current || isComposing) return;
+    isDirtyRef.current = true;
 
     if (debounceTimerRef.current) {
       clearTimeout(debounceTimerRef.current);
@@ -100,8 +121,9 @@ export const RichEditor: React.FC<RichEditorProps> = ({
 
     debounceTimerRef.current = setTimeout(() => {
       if (!editorRef.current) return;
+      isDirtyRef.current = false;
       const html = editorRef.current.innerHTML;
-      const plain = editorRef.current.innerText || '';
+      const plain = extractPlainText(editorRef.current);
       onChange(html, plain);
     }, 300);
   }, [isComposing, onChange]);
@@ -246,12 +268,24 @@ export const RichEditor: React.FC<RichEditorProps> = ({
     handleContentChange();
   }, [checkFormats, handleContentChange]);
 
-  // Expose formatting APIs to parent
+  // Expose formatting and flush APIs to parent
   useEffect(() => {
     if (editorRefExpose) {
-      editorRefExpose({ format, insertChecklist: toggleChecklist });
+      editorRefExpose({ format, insertChecklist: toggleChecklist, flush });
     }
-  }, [editorRefExpose, format, toggleChecklist]);
+  }, [editorRefExpose, format, toggleChecklist, flush]);
+
+  // Flush pending changes before page unloads or component unmounts
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      flush();
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+      flush();
+    };
+  }, [flush]);
 
   // Initial HTML mount
   useEffect(() => {
@@ -383,6 +417,23 @@ export const RichEditor: React.FC<RichEditorProps> = ({
     }
   };
 
+  // Intercept paste to sanitize HTML and prevent malformed layout/large base64 injection
+  const handlePaste = (e: React.ClipboardEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    const clipboardData = e.clipboardData;
+    const rawHtml = clipboardData.getData('text/html');
+    const plainText = clipboardData.getData('text/plain');
+
+    if (rawHtml) {
+      const clean = sanitizeHtml(rawHtml);
+      document.execCommand('insertHTML', false, clean);
+    } else if (plainText) {
+      document.execCommand('insertText', false, plainText);
+    }
+    handleContentChange();
+    checkFormats();
+  };
+
   return (
     <div className="note-editor-wrapper app-no-drag">
       <div
@@ -391,6 +442,8 @@ export const RichEditor: React.FC<RichEditorProps> = ({
         contentEditable={true}
         suppressContentEditableWarning={true}
         data-placeholder={placeholder}
+        onBlur={flush}
+        onPaste={handlePaste}
         onInput={handleContentChange}
         onKeyUp={checkFormats}
         onMouseUp={checkFormats}

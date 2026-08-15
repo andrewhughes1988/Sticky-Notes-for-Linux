@@ -26,6 +26,7 @@ export const NoteView: React.FC<NoteViewProps> = ({ noteId }) => {
   const editorApiRef = useRef<{
     format: (cmd: string, val?: string) => void;
     insertChecklist: () => void;
+    flush: () => void;
   } | null>(null);
 
   // Load note data on mount
@@ -56,6 +57,7 @@ export const NoteView: React.FC<NoteViewProps> = ({ noteId }) => {
   const currentTheme = isDark ? themeDef.dark : themeDef.light;
 
   const handleColorChange = (newColor: NoteColor) => {
+    editorApiRef.current?.flush();
     setNote((prev) => (prev ? { ...prev, color: newColor } : null));
     window.stickyNotesAPI.updateNote(note.id, { color: newColor });
   };
@@ -73,10 +75,12 @@ export const NoteView: React.FC<NoteViewProps> = ({ noteId }) => {
   };
 
   const handleNewNote = () => {
+    editorApiRef.current?.flush();
     window.stickyNotesAPI.createNote({ color: note.color });
   };
 
   const handleCloseNote = () => {
+    editorApiRef.current?.flush();
     window.stickyNotesAPI.closeNoteWindow(note.id);
   };
 

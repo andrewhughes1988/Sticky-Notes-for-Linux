@@ -6,13 +6,12 @@ import crypto from 'node:crypto';
 import { Note, NoteColor, AppConfig } from '../shared/types';
 
 export class DatabaseService {
-  private db: Database.Database;
+  private db!: Database.Database;
   private dbPath: string;
 
   constructor(customPath?: string) {
     if (customPath) {
       this.dbPath = customPath;
-      this.db = new Database(this.dbPath);
     } else {
       const dataDir = process.env.XDG_DATA_HOME
         ? path.join(process.env.XDG_DATA_HOME, 'sticky-notes')
@@ -30,17 +29,9 @@ export class DatabaseService {
       }
 
       this.dbPath = path.join(dataDir, 'stickynotes.db');
-      this.db = new Database(this.dbPath);
-
-      // Secure database file permissions 0600 (-rw-------)
-      try {
-        if (fs.existsSync(this.dbPath)) {
-          fs.chmodSync(this.dbPath, 0o600);
-        }
-      } catch {
-        // Ignore
-      }
     }
+
+    this.openDatabaseWithRecovery();
 
     // Secure database file permissions 0600 (-rw-------)
     try {
@@ -51,12 +42,46 @@ export class DatabaseService {
       // Ignore
     }
 
-    // Enable Write-Ahead Logging (WAL) and foreign keys for high performance and integrity
-    this.db.pragma('journal_mode = WAL');
-    this.db.pragma('synchronous = NORMAL');
-    this.db.pragma('foreign_keys = ON');
-
     this.initSchema();
+  }
+
+  private openDatabaseWithRecovery(): void {
+    try {
+      this.db = new Database(this.dbPath);
+      this.db.pragma('journal_mode = WAL');
+      this.db.pragma('synchronous = NORMAL');
+      this.db.pragma('foreign_keys = ON');
+
+      // Fast, lightweight verification (stops after 1 error, sub-millisecond)
+      const quickCheck = this.db.pragma('quick_check(1)') as [{ quick_check: string }] | undefined;
+      if (quickCheck && quickCheck[0] && quickCheck[0].quick_check !== 'ok') {
+        throw new Error(`Database quick_check failed: ${quickCheck[0].quick_check}`);
+      }
+    } catch (err) {
+      console.error('Database open failed, performing automatic corruption backup & recovery:', err);
+      try {
+        if (this.db) {
+          try { this.db.close(); } catch { /* ignore */ }
+        }
+        if (fs.existsSync(this.dbPath)) {
+          const corruptBackup = `${this.dbPath}.corrupt.${Date.now()}`;
+          fs.copyFileSync(this.dbPath, corruptBackup);
+          fs.unlinkSync(this.dbPath);
+        }
+        const walPath = `${this.dbPath}-wal`;
+        const shmPath = `${this.dbPath}-shm`;
+        if (fs.existsSync(walPath)) fs.unlinkSync(walPath);
+        if (fs.existsSync(shmPath)) fs.unlinkSync(shmPath);
+
+        this.db = new Database(this.dbPath);
+        this.db.pragma('journal_mode = WAL');
+        this.db.pragma('synchronous = NORMAL');
+        this.db.pragma('foreign_keys = ON');
+      } catch (recoveryErr) {
+        console.error('Fatal database recovery failure:', recoveryErr);
+        throw recoveryErr;
+      }
+    }
   }
 
   private initSchema(): void {
@@ -190,18 +215,31 @@ export class DatabaseService {
     const { search, includeClosed = true } = options;
 
     if (search && search.trim().length > 0) {
-      const cleanQuery = search.trim().replace(/"/g, '""');
-      const openFilter = includeClosed ? '' : 'AND is_open = 1';
+      const cleanQuery = search.trim().replace(/["*]/g, '');
+      const openFilter = includeClosed ? '' : 'AND notes.is_open = 1';
       
-      const query = `
-        SELECT notes.* FROM notes
-        JOIN notes_fts ON notes.id = notes_fts.id
-        WHERE notes.deleted_at IS NULL ${openFilter}
-          AND notes_fts MATCH ?
-        ORDER BY notes.updated_at DESC
-      `;
-      const stmt = this.db.prepare(query);
-      return stmt.all(`"${cleanQuery}"*`) as Note[];
+      try {
+        const query = `
+          SELECT notes.* FROM notes
+          JOIN notes_fts ON notes.rowid = notes_fts.rowid
+          WHERE notes.deleted_at IS NULL ${openFilter}
+            AND notes_fts MATCH ?
+          ORDER BY notes.updated_at DESC
+        `;
+        const stmt = this.db.prepare(query);
+        return stmt.all(`"${cleanQuery}"*`) as Note[];
+      } catch (err) {
+        // Safe fallback to LIKE if query has special syntax issues
+        const fallbackQuery = `
+          SELECT * FROM notes
+          WHERE deleted_at IS NULL ${openFilter}
+            AND (content_plain LIKE ? OR title LIKE ?)
+          ORDER BY updated_at DESC
+        `;
+        const stmt = this.db.prepare(fallbackQuery);
+        const term = `%${cleanQuery}%`;
+        return stmt.all(term, term) as Note[];
+      }
     }
 
     const openFilter = includeClosed ? '' : 'AND is_open = 1';
@@ -214,41 +252,44 @@ export class DatabaseService {
   }
 
   public updateNote(id: string, updates: Partial<Note>): Note | null {
-    const current = this.getNoteById(id);
-    if (!current) return null;
-
-    const updated: Note = {
-      ...current,
-      ...updates,
-      updated_at: updates.updated_at || Date.now(),
-    };
+    const fields: string[] = [];
+    const values: any[] = [];
 
     // Auto derive title from plain content if not explicitly provided
     if (updates.content_plain !== undefined && !updates.title) {
       const firstLine = updates.content_plain.trim().split('\n')[0] || '';
-      updated.title = firstLine.slice(0, 80);
+      updates.title = firstLine.slice(0, 80);
     }
 
-    const stmt = this.db.prepare(`
-      UPDATE notes SET
-        title = @title,
-        content_html = @content_html,
-        content_plain = @content_plain,
-        color = @color,
-        is_open = @is_open,
-        is_pinned = @is_pinned,
-        pos_x = @pos_x,
-        pos_y = @pos_y,
-        width = @width,
-        height = @height,
-        z_order = @z_order,
-        updated_at = @updated_at,
-        sync_status = 'pending_update'
-      WHERE id = @id AND deleted_at IS NULL
-    `);
+    const allowedKeys: (keyof Note)[] = [
+      'title', 'content_html', 'content_plain', 'color',
+      'is_open', 'is_pinned', 'pos_x', 'pos_y',
+      'width', 'height', 'z_order', 'remote_id',
+      'change_key', 'last_synced_at'
+    ];
 
-    stmt.run(updated);
-    return updated;
+    for (const key of allowedKeys) {
+      if (updates[key] !== undefined) {
+        fields.push(`${key} = ?`);
+        values.push(updates[key]);
+      }
+    }
+
+    fields.push('updated_at = ?');
+    values.push(updates.updated_at || Date.now());
+
+    fields.push("sync_status = 'pending_update'");
+
+    values.push(id);
+    const sql = `UPDATE notes SET ${fields.join(', ')} WHERE id = ? AND deleted_at IS NULL`;
+    const stmt = this.db.prepare(sql);
+    const info = stmt.run(...values);
+
+    if (info.changes === 0) {
+      return null;
+    }
+
+    return this.getNoteById(id);
   }
 
   public updateNoteBounds(id: string, bounds: { x: number; y: number; width: number; height: number }): void {

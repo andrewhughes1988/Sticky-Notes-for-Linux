@@ -62,15 +62,19 @@ export const ManagerView: React.FC = () => {
   useEffect(() => {
     fetchNotes(searchQuery);
 
-    const unsubChanged = window.stickyNotesAPI.onNotesChanged(() => {
-      fetchNotes(searchQuery);
-    });
+    let refreshTimeout: NodeJS.Timeout | null = null;
+    const debouncedRefresh = () => {
+      if (refreshTimeout) clearTimeout(refreshTimeout);
+      refreshTimeout = setTimeout(() => {
+        fetchNotes(searchQuery);
+      }, 150);
+    };
 
-    const unsubDeleted = window.stickyNotesAPI.onNoteDeleted(() => {
-      fetchNotes(searchQuery);
-    });
+    const unsubChanged = window.stickyNotesAPI.onNotesChanged(debouncedRefresh);
+    const unsubDeleted = window.stickyNotesAPI.onNoteDeleted(debouncedRefresh);
 
     return () => {
+      if (refreshTimeout) clearTimeout(refreshTimeout);
       unsubChanged();
       unsubDeleted();
     };
@@ -82,20 +86,24 @@ export const ManagerView: React.FC = () => {
     fetchNotes(val);
   };
 
-  const handleCreateNote = async () => {
+  const handleCreateNote = useCallback(async () => {
     await window.stickyNotesAPI.createNote();
-  };
+  }, []);
 
-  const handleOpenNote = (id: string) => {
+  const handleOpenNote = useCallback((id: string) => {
     window.stickyNotesAPI.openNoteWindow(id);
-  };
+  }, []);
 
-  const handleConfirmDelete = () => {
+  const handleRequestDelete = useCallback((id: string) => {
+    setNoteToDelete(id);
+  }, []);
+
+  const handleConfirmDelete = useCallback(() => {
     if (noteToDelete) {
       window.stickyNotesAPI.deleteNote(noteToDelete);
       setNoteToDelete(null);
     }
-  };
+  }, [noteToDelete]);
 
   const handleCloseManager = () => {
     window.stickyNotesAPI.toggleManagerWindow();
@@ -111,15 +119,6 @@ export const ManagerView: React.FC = () => {
         </div>
 
         <div className="manager-controls app-no-drag">
-          <button
-            type="button"
-            className="header-btn"
-            title="New note"
-            onClick={handleCreateNote}
-          >
-            <Plus size={16} />
-          </button>
-
           <button
             type="button"
             className="header-btn"
@@ -193,7 +192,7 @@ export const ManagerView: React.FC = () => {
               key={note.id}
               note={note}
               onOpen={handleOpenNote}
-              onDelete={(id) => setNoteToDelete(id)}
+              onDelete={handleRequestDelete}
             />
           ))
         )}
