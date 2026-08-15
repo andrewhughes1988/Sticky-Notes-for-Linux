@@ -1,6 +1,15 @@
 import React, { useRef, useEffect, useState, useCallback } from 'react';
 import { sanitizeHtml } from '../utils/sanitize';
 
+export type FormatKey = 'bold' | 'italic' | 'underline' | 'strike';
+
+export interface FormatState {
+  bold: boolean;
+  italic: boolean;
+  underline: boolean;
+  strike: boolean;
+}
+
 interface RichEditorProps {
   initialHtml: string;
   placeholder?: string;
@@ -31,6 +40,9 @@ export const RichEditor: React.FC<RichEditorProps> = ({
   const [isComposing, setIsComposing] = useState(false);
   const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
   const isDirtyRef = useRef(false);
+
+  // State for pending styling on a collapsed caret
+  const pendingFormatsRef = useRef<FormatState | null>(null);
 
   // Helper to extract clean plain text without forcing synchronous style/layout reflows
   const extractPlainText = (element: HTMLElement): string => {
@@ -89,44 +101,180 @@ export const RichEditor: React.FC<RichEditorProps> = ({
     return curr instanceof HTMLElement ? curr : null;
   };
 
-  // Helper to check if an element matches a formatting command
-  const isTagMatchingCommand = (el: HTMLElement, command: string): boolean => {
-    const tagName = el.tagName.toLowerCase();
-    const style = el.style;
-    const textDec = (style.textDecoration || style.textDecorationLine || '').toLowerCase();
-
-    switch (command.toLowerCase()) {
-      case 'bold':
-        return tagName === 'b' || tagName === 'strong' || style.fontWeight === 'bold' || parseInt(style.fontWeight || '0', 10) >= 700;
-      case 'italic':
-        return tagName === 'i' || tagName === 'em' || style.fontStyle === 'italic';
-      case 'underline':
-        return tagName === 'u' || textDec.includes('underline');
-      case 'strikethrough':
-        return tagName === 's' || tagName === 'strike' || tagName === 'del' || textDec.includes('line-through');
-      default:
-        return false;
-    }
+  // Helper to map commands to format keys
+  const getCommandKey = (command: string): FormatKey => {
+    const c = command.toLowerCase();
+    if (c === 'bold') return 'bold';
+    if (c === 'italic') return 'italic';
+    if (c === 'underline') return 'underline';
+    return 'strike';
   };
 
-  // Helper to find closest formatting tag for a command
-  const findFormattingTag = (node: Node | null, command: string): HTMLElement | null => {
+  // Helper to extract active formats at a specific DOM node
+  const getDomFormatsAtNode = (node: Node | null, root: HTMLElement | null): FormatState => {
+    const result: FormatState = { bold: false, italic: false, underline: false, strike: false };
     let curr: Node | null = node;
-    while (curr && curr !== editorRef.current) {
+    while (curr && curr !== root) {
       if (curr.nodeType === Node.ELEMENT_NODE) {
         const el = curr as HTMLElement;
-        if (isTagMatchingCommand(el, command)) {
-          return el;
+        const tag = el.tagName.toLowerCase();
+        const style = el.style;
+        const textDec = (style.textDecoration || style.textDecorationLine || '').toLowerCase();
+        const weight = (style.fontWeight || '').toLowerCase();
+
+        if (tag === 'b' || tag === 'strong' || weight === 'bold' || parseInt(weight || '0', 10) >= 700) {
+          result.bold = true;
+        }
+        if (tag === 'i' || tag === 'em' || style.fontStyle.toLowerCase() === 'italic') {
+          result.italic = true;
+        }
+        if (tag === 'u' || textDec.includes('underline')) {
+          result.underline = true;
+        }
+        if (tag === 's' || tag === 'strike' || tag === 'del' || textDec.includes('line-through')) {
+          result.strike = true;
         }
       }
       curr = curr.parentNode;
     }
-    return null;
+    return result;
+  };
+
+  // Get all text nodes intersecting a range
+  const getTextNodesInRange = (range: Range, root: HTMLElement): Text[] => {
+    const textNodes: Text[] = [];
+    const container = range.commonAncestorContainer;
+    const searchRoot = container.nodeType === Node.TEXT_NODE ? (container.parentNode || root) : container;
+
+    const treeWalker = document.createTreeWalker(
+      searchRoot,
+      NodeFilter.SHOW_TEXT,
+      {
+        acceptNode: (node) => {
+          try {
+            if (!range.intersectsNode(node)) return NodeFilter.FILTER_REJECT;
+            const text = (node.textContent || '').replace(/\u200B/g, '');
+            if (text.length === 0) return NodeFilter.FILTER_REJECT;
+            return NodeFilter.FILTER_ACCEPT;
+          } catch {
+            return NodeFilter.FILTER_REJECT;
+          }
+        },
+      }
+    );
+
+    let curr = treeWalker.nextNode();
+    while (curr) {
+      textNodes.push(curr as Text);
+      curr = treeWalker.nextNode();
+    }
+    return textNodes;
+  };
+
+  // Evaluate format state across a selection range ('all' | 'some' | 'none')
+  const getRangeFormatState = (range: Range, command: string, root: HTMLElement): 'all' | 'some' | 'none' => {
+    const key = getCommandKey(command);
+    const textNodes = getTextNodesInRange(range, root);
+
+    if (textNodes.length === 0) {
+      const formats = getDomFormatsAtNode(range.startContainer, root);
+      return formats[key] ? 'all' : 'none';
+    }
+
+    let count = 0;
+    for (const node of textNodes) {
+      const formats = getDomFormatsAtNode(node, root);
+      if (formats[key]) {
+        count++;
+      }
+    }
+
+    if (count === textNodes.length) return 'all';
+    if (count > 0) return 'some';
+    return 'none';
+  };
+
+  const unwrapElement = (el: HTMLElement) => {
+    const parent = el.parentNode;
+    if (!parent) return;
+    while (el.firstChild) {
+      parent.insertBefore(el.firstChild, el);
+    }
+    parent.removeChild(el);
+  };
+
+  const cleanEmptySpan = (el: HTMLElement) => {
+    if (
+      el.tagName.toLowerCase() === 'span' &&
+      !el.getAttribute('style') &&
+      el.classList.length === 0
+    ) {
+      unwrapElement(el);
+    }
+  };
+
+  // Remove a specific format from all nodes within a range
+  const removeFormatFromRange = (range: Range, command: string, root: HTMLElement) => {
+    const key = getCommandKey(command);
+    const textNodes = getTextNodesInRange(range, root);
+
+    for (const textNode of textNodes) {
+      let curr: Node | null = textNode.parentNode;
+      while (curr && curr !== root) {
+        if (curr.nodeType === Node.ELEMENT_NODE) {
+          const el = curr as HTMLElement;
+          const tag = el.tagName.toLowerCase();
+
+          if (key === 'underline') {
+            if (tag === 'u') {
+              unwrapElement(el);
+            } else if (el.style.textDecoration || el.style.textDecorationLine) {
+              const currentDec = el.style.textDecoration || el.style.textDecorationLine || '';
+              const newDec = currentDec.replace(/underline/gi, '').trim();
+              if (newDec) {
+                el.style.textDecoration = newDec;
+              } else {
+                el.style.textDecoration = '';
+                cleanEmptySpan(el);
+              }
+            }
+          } else if (key === 'strike') {
+            if (tag === 's' || tag === 'strike' || tag === 'del') {
+              unwrapElement(el);
+            } else if (el.style.textDecoration || el.style.textDecorationLine) {
+              const currentDec = el.style.textDecoration || el.style.textDecorationLine || '';
+              const newDec = currentDec.replace(/line-through/gi, '').trim();
+              if (newDec) {
+                el.style.textDecoration = newDec;
+              } else {
+                el.style.textDecoration = '';
+                cleanEmptySpan(el);
+              }
+            }
+          } else if (key === 'bold') {
+            if (tag === 'b' || tag === 'strong') {
+              unwrapElement(el);
+            } else if (el.style.fontWeight) {
+              el.style.fontWeight = '';
+              cleanEmptySpan(el);
+            }
+          } else if (key === 'italic') {
+            if (tag === 'i' || tag === 'em') {
+              unwrapElement(el);
+            } else if (el.style.fontStyle) {
+              el.style.fontStyle = '';
+              cleanEmptySpan(el);
+            }
+          }
+        }
+        curr = curr.parentNode;
+      }
+    }
   };
 
   // Update format states on selection change
   const checkFormats = useCallback(() => {
-    if (!onFormatChange) return;
+    if (!onFormatChange || !editorRef.current) return;
     try {
       const selection = window.getSelection();
       const inChecklist = Boolean(
@@ -136,33 +284,32 @@ export const RichEditor: React.FC<RichEditorProps> = ({
         selection && selection.anchorNode && getParentListItem(selection.anchorNode)
       );
 
-      const isAnchorEscaped = selection && selection.anchorNode && selection.anchorNode.textContent === '\u200B';
+      if (pendingFormatsRef.current && selection && selection.isCollapsed) {
+        onFormatChange({
+          ...pendingFormatsRef.current,
+          list: inBulletList,
+          checklist: inChecklist,
+        });
+        return;
+      }
 
-      const isUnderline = !isAnchorEscaped && (
-        document.queryCommandState('underline') ||
-        Boolean(selection?.anchorNode && findFormattingTag(selection.anchorNode, 'underline'))
-      );
-
-      const isStrike = !isAnchorEscaped && (
-        document.queryCommandState('strikeThrough') ||
-        Boolean(selection?.anchorNode && findFormattingTag(selection.anchorNode, 'strikeThrough'))
-      );
-
-      const isBold = !isAnchorEscaped && (
-        document.queryCommandState('bold') ||
-        Boolean(selection?.anchorNode && findFormattingTag(selection.anchorNode, 'bold'))
-      );
-
-      const isItalic = !isAnchorEscaped && (
-        document.queryCommandState('italic') ||
-        Boolean(selection?.anchorNode && findFormattingTag(selection.anchorNode, 'italic'))
-      );
+      let currentFormats: FormatState = { bold: false, italic: false, underline: false, strike: false };
+      if (selection && selection.rangeCount > 0) {
+        const range = selection.getRangeAt(0);
+        if (range.collapsed) {
+          currentFormats = getDomFormatsAtNode(selection.anchorNode, editorRef.current);
+        } else {
+          currentFormats = {
+            bold: getRangeFormatState(range, 'bold', editorRef.current) === 'all',
+            italic: getRangeFormatState(range, 'italic', editorRef.current) === 'all',
+            underline: getRangeFormatState(range, 'underline', editorRef.current) === 'all',
+            strike: getRangeFormatState(range, 'strikeThrough', editorRef.current) === 'all',
+          };
+        }
+      }
 
       onFormatChange({
-        bold: isBold,
-        italic: isItalic,
-        underline: isUnderline,
-        strike: isStrike,
+        ...currentFormats,
         list: inBulletList,
         checklist: inChecklist,
       });
@@ -195,8 +342,10 @@ export const RichEditor: React.FC<RichEditorProps> = ({
       editorRef.current.focus();
 
       const selection = window.getSelection();
+      if (!selection || selection.rangeCount === 0) return;
 
-      if (command === 'insertUnorderedList' && selection && selection.rangeCount > 0) {
+      // 1. Lists
+      if (command === 'insertUnorderedList') {
         const checklistItem = getParentChecklistItem(selection.anchorNode);
         if (checklistItem) {
           // Mutually exclusive: convert Checklist item directly to a Bullet List
@@ -221,90 +370,42 @@ export const RichEditor: React.FC<RichEditorProps> = ({
           handleContentChange();
           return;
         }
+        document.execCommand(command, false, value);
+        checkFormats();
+        handleContentChange();
+        return;
       }
 
-      // Handle collapsed caret formatting (toggle ON/OFF when no text is selected)
-      if (selection && selection.rangeCount > 0 && selection.isCollapsed) {
-        const activeTag = findFormattingTag(selection.anchorNode, command);
-        let isCmdActive = false;
-        try {
-          isCmdActive = document.queryCommandState(command);
-        } catch {}
+      const key = getCommandKey(command);
+      const range = selection.getRangeAt(0);
 
-        if (activeTag || isCmdActive) {
-          // Untoggle requested on a collapsed selection
-          if (activeTag) {
-            const rawContent = (activeTag.textContent || '').replace(/\u200B/g, '').trim();
-            if (rawContent === '' || activeTag.innerHTML === '<br>' || activeTag.innerHTML === '&nbsp;') {
-              // Empty formatting tag (e.g. <u>&#8203;</u> or <u><br></u>): replace with clean <br>
-              const parent = activeTag.parentNode;
-              if (parent) {
-                const br = document.createElement('br');
-                parent.replaceChild(br, activeTag);
-                const newRange = document.createRange();
-                newRange.setStartBefore(br);
-                newRange.collapse(true);
-                selection.removeAllRanges();
-                selection.addRange(newRange);
-              }
-            } else {
-              // Tag has text: escape outside of tag with a zero-width space
-              const textNode = document.createTextNode('\u200B');
-              if (activeTag.nextSibling) {
-                activeTag.parentNode?.insertBefore(textNode, activeTag.nextSibling);
-              } else {
-                activeTag.parentNode?.appendChild(textNode);
-              }
-              const newRange = document.createRange();
-              newRange.setStart(textNode, 1);
-              newRange.collapse(true);
-              selection.removeAllRanges();
-              selection.addRange(newRange);
-            }
-            checkFormats();
-            handleContentChange();
-            return;
-          } else {
-            document.execCommand(command, false, value);
-            checkFormats();
-            handleContentChange();
-            return;
-          }
-        } else {
-          // Toggle ON requested on collapsed caret
-          const isEditorEmpty = !editorRef.current.textContent || editorRef.current.textContent.trim() === '';
-          if (isEditorEmpty) {
-            let tagName = 'span';
-            if (command === 'underline') tagName = 'u';
-            else if (command === 'strikeThrough') tagName = 's';
-            else if (command === 'bold') tagName = 'b';
-            else if (command === 'italic') tagName = 'i';
-
-            const tagEl = document.createElement(tagName);
-            const textNode = document.createTextNode('\u200B');
-            tagEl.appendChild(textNode);
-            editorRef.current.innerHTML = '';
-            editorRef.current.appendChild(tagEl);
-
-            const newRange = document.createRange();
-            newRange.setStart(textNode, 1);
-            newRange.collapse(true);
-            selection.removeAllRanges();
-            selection.addRange(newRange);
-
-            checkFormats();
-            handleContentChange();
-            return;
-          } else {
-            document.execCommand(command, false, value);
-            checkFormats();
-            handleContentChange();
-            return;
-          }
-        }
+      // 2. Collapsed Caret Formatting: Toggle independently
+      if (range.collapsed) {
+        const currentFormats = pendingFormatsRef.current || getDomFormatsAtNode(selection.anchorNode, editorRef.current);
+        const nextState = !currentFormats[key];
+        pendingFormatsRef.current = {
+          ...currentFormats,
+          [key]: nextState,
+        };
+        checkFormats();
+        return;
       }
 
-      document.execCommand(command, false, value);
+      // 3. Highlighted Range Selection
+      const formatState = getRangeFormatState(range, command, editorRef.current);
+      if (formatState === 'none') {
+        // Uniformly apply style to entire selection
+        document.execCommand(command, false, value);
+      } else {
+        // 'some' or 'all': Uniformly remove style from entire selection
+        const savedRange = range.cloneRange();
+        removeFormatFromRange(range, command, editorRef.current);
+        editorRef.current.normalize();
+        selection.removeAllRanges();
+        selection.addRange(savedRange);
+      }
+
+      pendingFormatsRef.current = null;
       checkFormats();
       handleContentChange();
     },
@@ -575,6 +676,76 @@ export const RichEditor: React.FC<RichEditorProps> = ({
     checkFormats();
   };
 
+  // Handle text insertion when pendingFormats are active on collapsed caret
+  const handleBeforeInput = (e: React.FormEvent<HTMLDivElement>) => {
+    const inputEvent = e.nativeEvent as InputEvent;
+    if (inputEvent.inputType === 'insertText' && inputEvent.data && pendingFormatsRef.current) {
+      e.preventDefault();
+      const selection = window.getSelection();
+      if (!selection || selection.rangeCount === 0) return;
+
+      const range = selection.getRangeAt(0);
+      range.deleteContents();
+
+      const formats = pendingFormatsRef.current;
+      const text = inputEvent.data;
+      const hasStyle = formats.bold || formats.italic || formats.underline || formats.strike;
+
+      if (hasStyle) {
+        let rootElement: HTMLElement | null = null;
+        let leafElement: HTMLElement | null = null;
+
+        const wrapInTag = (tagName: string) => {
+          const el = document.createElement(tagName);
+          if (!rootElement) rootElement = el;
+          if (leafElement) leafElement.appendChild(el);
+          leafElement = el;
+        };
+
+        if (formats.bold) wrapInTag('strong');
+        if (formats.italic) wrapInTag('em');
+        if (formats.underline) wrapInTag('u');
+        if (formats.strike) wrapInTag('s');
+
+        const textNode = document.createTextNode(text);
+        leafElement!.appendChild(textNode);
+
+        range.insertNode(rootElement!);
+
+        const newRange = document.createRange();
+        newRange.setStart(textNode, text.length);
+        newRange.collapse(true);
+        selection.removeAllRanges();
+        selection.addRange(newRange);
+      } else {
+        const textNode = document.createTextNode(text);
+        range.insertNode(textNode);
+
+        const newRange = document.createRange();
+        newRange.setStart(textNode, text.length);
+        newRange.collapse(true);
+        selection.removeAllRanges();
+        selection.addRange(newRange);
+      }
+
+      pendingFormatsRef.current = null;
+      handleContentChange();
+      checkFormats();
+    }
+  };
+
+  const handleSelectionReset = (e: React.SyntheticEvent) => {
+    if ('key' in e) {
+      const key = (e as React.KeyboardEvent).key;
+      if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End', 'PageUp', 'PageDown'].includes(key)) {
+        pendingFormatsRef.current = null;
+      }
+    } else {
+      pendingFormatsRef.current = null;
+    }
+    checkFormats();
+  };
+
   return (
     <div className="note-editor-wrapper app-no-drag">
       <div
@@ -585,9 +756,10 @@ export const RichEditor: React.FC<RichEditorProps> = ({
         data-placeholder={placeholder}
         onBlur={flush}
         onPaste={handlePaste}
+        onBeforeInput={handleBeforeInput}
         onInput={handleContentChange}
-        onKeyUp={checkFormats}
-        onMouseUp={checkFormats}
+        onKeyUp={handleSelectionReset}
+        onMouseUp={handleSelectionReset}
         onKeyDown={handleKeyDown}
         onClick={handleClick}
         onCompositionStart={() => setIsComposing(true)}
