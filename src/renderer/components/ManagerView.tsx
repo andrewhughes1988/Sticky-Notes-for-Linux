@@ -2,7 +2,8 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { Note } from '../../shared/types';
 import { NoteCard } from './NoteCard';
 import { DeleteModal } from './DeleteModal';
-import { Plus, Search, X, FileText, Sun, Moon } from 'lucide-react';
+import { StickyNoteIcon } from './StickyNoteIcon';
+import { Plus, Search, X, Sun, Moon } from 'lucide-react';
 
 export const ManagerView: React.FC = () => {
   const [notes, setNotes] = useState<Note[]>([]);
@@ -105,7 +106,7 @@ export const ManagerView: React.FC = () => {
       {/* Top Header Bar */}
       <div className="manager-header app-drag-region">
         <div className="manager-title">
-          <img src="/icon.png" alt="Sticky Notes" style={{ width: 18, height: 18, borderRadius: 3 }} />
+          <StickyNoteIcon size={18} />
           <span>Sticky Notes</span>
         </div>
 
@@ -179,7 +180,7 @@ export const ManagerView: React.FC = () => {
       <div className="manager-notes-list app-no-drag">
         {notes.length === 0 ? (
           <div className="manager-empty-state">
-            <FileText size={36} opacity={0.4} />
+            <StickyNoteIcon size={40} />
             <div>
               {searchQuery
                 ? 'No matching notes found.'
