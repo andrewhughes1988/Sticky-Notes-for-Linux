@@ -635,23 +635,13 @@ html, body, #root {
 }
 
 .badge-open {
-  background: rgba(16, 124, 65, 0.15);
-  color: #107C41;
-}
-
-.dark .badge-open {
-  background: rgba(16, 124, 65, 0.3);
-  color: #81C784;
+  background: rgba(16, 124, 65, 0.15) !important;
+  color: #107C41 !important;
 }
 
 .badge-closed {
-  background: rgba(0, 0, 0, 0.08);
-  color: #666666;
-}
-
-.dark .badge-closed {
-  background: rgba(255, 255, 255, 0.1);
-  color: #AAAAAA;
+  background: rgba(0, 0, 0, 0.08) !important;
+  color: #666666 !important;
 }
 
 .note-card-title {
