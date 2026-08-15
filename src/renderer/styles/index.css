@@ -1,3 +1,5 @@
+@import url('https://fonts.googleapis.com/css2?family=Architects+Daughter&family=Caveat:wght@400..700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Kalam:wght@300;400;700&family=Nunito:wght@400;500;600;700&family=Outfit:wght@400;500;600;700&family=Patrick+Hand&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap');
+
 :root {
   --font-family: -apple-system, BlinkMacSystemFont, "Segoe UI Variable Text", "Segoe UI", "Segoe Print", Roboto, "Helvetica Neue", Arial, sans-serif;
   --radius-sm: 4px;
@@ -464,6 +466,174 @@ html, body, #root {
 .manager-container.dark .manager-controls .header-btn:hover,
 .dark .manager-controls .header-btn:hover {
   background: rgba(255, 255, 255, 0.12);
+}
+
+/* Font Picker Popover for Notes Manager */
+.font-picker-backdrop {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 190;
+}
+
+.font-picker-popover {
+  position: absolute;
+  top: 42px;
+  right: 12px;
+  background: #FFFFFF;
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-flyout);
+  z-index: 200;
+  width: 270px;
+  max-height: 420px;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  animation: flyoutIn 0.15s cubic-bezier(0.1, 0.9, 0.2, 1);
+  overflow: hidden;
+}
+
+.manager-container.dark .font-picker-popover,
+.dark .font-picker-popover {
+  background: #2D2D2D;
+  border-color: rgba(255, 255, 255, 0.12);
+  color: #FFFFFF;
+}
+
+.font-picker-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+  flex-shrink: 0;
+}
+
+.manager-container.dark .font-picker-header,
+.dark .font-picker-header {
+  border-bottom-color: rgba(255, 255, 255, 0.08);
+}
+
+.font-picker-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: inherit;
+}
+
+.font-picker-close-btn {
+  background: transparent;
+  border: none;
+  color: #777777;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px;
+  border-radius: var(--radius-sm);
+}
+
+.font-picker-close-btn:hover {
+  background: rgba(0, 0, 0, 0.08);
+  color: #202020;
+}
+
+.manager-container.dark .font-picker-close-btn:hover,
+.dark .font-picker-close-btn:hover {
+  background: rgba(255, 255, 255, 0.12);
+  color: #FFFFFF;
+}
+
+.font-picker-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.font-category-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.font-category-label {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #888888;
+  padding: 4px 8px 2px 8px;
+}
+
+.manager-container.dark .font-category-label,
+.dark .font-category-label {
+  color: #AAAAAA;
+}
+
+.font-option-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px;
+  border: none;
+  background: transparent;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  text-align: left;
+  color: inherit;
+  transition: background-color 0.12s ease;
+  width: 100%;
+}
+
+.font-option-item:hover {
+  background: rgba(0, 0, 0, 0.06);
+}
+
+.manager-container.dark .font-option-item:hover,
+.dark .font-option-item:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.font-option-item.selected {
+  background: rgba(0, 120, 212, 0.1);
+  color: #0078D4;
+}
+
+.manager-container.dark .font-option-item.selected,
+.dark .font-option-item.selected {
+  background: rgba(96, 205, 255, 0.15);
+  color: #60CDFF;
+}
+
+.font-option-info {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.font-option-name {
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.2;
+}
+
+.font-option-sample {
+  font-size: 11px;
+  opacity: 0.7;
+}
+
+.font-option-check {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: inherit;
 }
 
 /* Manager Search Bar */

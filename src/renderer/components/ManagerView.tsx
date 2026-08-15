@@ -3,12 +3,21 @@ import { Note } from '../../shared/types';
 import { NoteCard } from './NoteCard';
 import { DeleteModal } from './DeleteModal';
 import { StickyNoteIcon } from './StickyNoteIcon';
-import { Plus, Search, X, Sun, Moon } from 'lucide-react';
+import { FontPicker, MANAGER_FONTS, FontOption } from './FontPicker';
+import { Plus, Search, X, Sun, Moon, Type } from 'lucide-react';
 
 export const ManagerView: React.FC = () => {
   const [notes, setNotes] = useState<Note[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [noteToDelete, setNoteToDelete] = useState<string | null>(null);
+  const [isFontPickerOpen, setIsFontPickerOpen] = useState(false);
+
+  // Initialize font preference
+  const [selectedFontId, setSelectedFontId] = useState<string>(() => {
+    return localStorage.getItem('manager_font') || 'system';
+  });
+
+  const currentFont = MANAGER_FONTS.find((f) => f.id === selectedFontId) || MANAGER_FONTS[0];
 
   // Initialize theme from localStorage, or fallback to desktop system default
   const [isDarkMode, setIsDarkMode] = useState<boolean>(() => {
@@ -46,6 +55,11 @@ export const ManagerView: React.FC = () => {
       return next;
     });
   };
+
+  const handleSelectFont = useCallback((font: FontOption) => {
+    setSelectedFontId(font.id);
+    localStorage.setItem('manager_font', font.id);
+  }, []);
 
   const fetchNotes = useCallback(async (query: string = '') => {
     try {
@@ -110,7 +124,10 @@ export const ManagerView: React.FC = () => {
   };
 
   return (
-    <div className={`manager-container ${isDarkMode ? 'dark' : 'light'}`}>
+    <div
+      className={`manager-container ${isDarkMode ? 'dark' : 'light'}`}
+      style={{ fontFamily: currentFont.fontFamily }}
+    >
       {/* Top Header Bar */}
       <div className="manager-header app-drag-region">
         <div className="manager-title">
@@ -119,6 +136,15 @@ export const ManagerView: React.FC = () => {
         </div>
 
         <div className="manager-controls app-no-drag">
+          <button
+            type="button"
+            className={`header-btn font-picker-trigger ${isFontPickerOpen ? 'active' : ''}`}
+            title={`Change font (${currentFont.name})`}
+            onClick={() => setIsFontPickerOpen(!isFontPickerOpen)}
+          >
+            <Type size={15} />
+          </button>
+
           <button
             type="button"
             className="header-btn"
@@ -138,6 +164,15 @@ export const ManagerView: React.FC = () => {
           </button>
         </div>
       </div>
+
+      {/* Font Picker Popover */}
+      {isFontPickerOpen && (
+        <FontPicker
+          currentFontId={selectedFontId}
+          onSelectFont={handleSelectFont}
+          onClose={() => setIsFontPickerOpen(false)}
+        />
+      )}
 
       {/* Search Input Bar */}
       <div className="manager-search-bar app-no-drag">
