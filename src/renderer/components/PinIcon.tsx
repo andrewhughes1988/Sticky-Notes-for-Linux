@@ -33,8 +33,8 @@ export const PinIcon: React.FC<PinIconProps> = ({
         ...style,
       }}
     >
-      {/* Modern Minimalist Pin: Clean Round Tack with Needle Point */}
-      <circle cx="12" cy="7.5" r="4.5" />
+      {/* Iconic Tapered Pushpin Silhouette: Flat Cap + Tapered Neck + Needle Point */}
+      <path d="M8 4h8v2.5l-1.5 5.5h-5L8 6.5z" />
       <line x1="12" y1="12" x2="12" y2="20.5" stroke="currentColor" fill="none" strokeWidth="2.2" />
     </svg>
   );
