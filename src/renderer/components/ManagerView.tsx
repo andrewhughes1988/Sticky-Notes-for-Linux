@@ -149,6 +149,9 @@ export const ManagerView: React.FC = () => {
             placeholder="Search notes..."
             value={searchQuery}
             onChange={handleSearchChange}
+            spellCheck={false}
+            autoCorrect="off"
+            autoCapitalize="off"
           />
           {searchQuery && (
             <button

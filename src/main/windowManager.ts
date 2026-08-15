@@ -153,6 +153,7 @@ export class WindowManager {
         nodeIntegration: false,
         sandbox: true,
         webSecurity: true,
+        spellcheck: false,
         additionalArguments: [`--note-id=${note.id}`, '--window-type=note'],
       },
     });
@@ -277,6 +278,7 @@ export class WindowManager {
         nodeIntegration: false,
         sandbox: true,
         webSecurity: true,
+        spellcheck: false,
         additionalArguments: ['--window-type=manager'],
       },
     });
