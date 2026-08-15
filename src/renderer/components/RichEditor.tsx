@@ -681,18 +681,18 @@ export const RichEditor: React.FC<RichEditorProps> = ({
     range: Range,
     formats: FormatState,
     root: HTMLElement
-  ): { container: Node; offset: number } => {
+  ): { parentNode: Node; insertBefore: Node | null } => {
     let container = range.startContainer;
     let offset = range.startOffset;
 
     // 1. If inside a Text node, split it if caret is in the middle
+    let leftNode: Node = container;
+    let rightNode: Node | null = null;
     if (container.nodeType === Node.TEXT_NODE) {
       const textNode = container as Text;
       const text = textNode.textContent || '';
-      if (offset > 0 && offset < text.length) {
-        const rightNode = textNode.splitText(offset);
-        container = rightNode;
-        offset = 0;
+      if (offset < text.length) {
+        rightNode = textNode.splitText(offset);
       }
     }
 
@@ -713,17 +713,18 @@ export const RichEditor: React.FC<RichEditorProps> = ({
       return false;
     };
 
-    let curr: Node | null = container;
-    while (curr && curr !== root) {
-      const parent: Node | null = curr.parentNode;
-      if (!parent) break;
-      const grandParent: Node | null = parent.parentNode;
+    let currLeft: Node = leftNode;
+    let currRight: Node | null = rightNode;
 
-      if (parent.nodeType === Node.ELEMENT_NODE && parent !== root && hasUnwantedFormat(parent as HTMLElement)) {
+    while (currLeft && currLeft !== root) {
+      const parent: Node | null = currLeft.parentNode;
+      if (!parent || parent === root) break;
+
+      if (parent.nodeType === Node.ELEMENT_NODE && hasUnwantedFormat(parent as HTMLElement)) {
         const parentEl = parent as HTMLElement;
         const rightParent = parentEl.cloneNode(false) as HTMLElement;
 
-        let sibling: Node | null = (curr.nodeType === Node.TEXT_NODE && offset === 0) ? curr : curr.nextSibling;
+        let sibling: Node | null = currRight ? currRight : currLeft.nextSibling;
 
         while (sibling) {
           const next = sibling.nextSibling;
@@ -731,25 +732,31 @@ export const RichEditor: React.FC<RichEditorProps> = ({
           sibling = next;
         }
 
-        if (grandParent) {
-          grandParent.insertBefore(rightParent, parentEl.nextSibling);
+        if (parentEl.parentNode) {
+          parentEl.parentNode.insertBefore(rightParent, parentEl.nextSibling);
         }
 
-        // Clean up empty split halves
-        if (parentEl.textContent === '' && !parentEl.querySelector('input, img, br')) {
-          parentEl.remove();
-        }
         if (rightParent.textContent === '' && !rightParent.querySelector('input, img, br')) {
+          currRight = rightParent.nextSibling;
           rightParent.remove();
+        } else {
+          currRight = rightParent;
         }
 
-        curr = grandParent;
+        currLeft = parent;
       } else {
-        curr = parent;
+        // Parent is a wanted ancestor or neutral container - insertion point is right here
+        return {
+          parentNode: parent,
+          insertBefore: currRight || (currLeft ? currLeft.nextSibling : null),
+        };
       }
     }
 
-    return { container: curr || root, offset: 0 };
+    return {
+      parentNode: root,
+      insertBefore: currRight || (currLeft && currLeft !== root ? currLeft.nextSibling : null),
+    };
   };
 
   // Attach native beforeinput listener to intercept typing when pendingFormats are active
@@ -770,7 +777,7 @@ export const RichEditor: React.FC<RichEditorProps> = ({
         const text = e.data;
 
         // 1. Split away any ancestor tags that contain styles the user untoggled
-        const splitPoint = splitUnwantedAncestors(range, formats, editorRef.current);
+        const ref = splitUnwantedAncestors(range, formats, editorRef.current);
 
         // 2. Build the styled wrapper or plain text node according to formats
         const textNode = document.createTextNode(text);
@@ -796,14 +803,9 @@ export const RichEditor: React.FC<RichEditorProps> = ({
           insertNode = rootEl;
         }
 
-        // 3. Insert into the split container
-        if (splitPoint.container === editorRef.current) {
-          editorRef.current.appendChild(insertNode);
-        } else if (splitPoint.container.parentNode) {
-          splitPoint.container.parentNode.insertBefore(insertNode, splitPoint.container.nextSibling);
-        } else {
-          editorRef.current.appendChild(insertNode);
-        }
+        // 3. Insert into the split container at the exact caret location
+        const targetParent = (ref.parentNode || editorRef.current) as HTMLElement;
+        targetParent.insertBefore(insertNode, ref.insertBefore);
 
         // 4. Place caret immediately after the inserted text
         const newRange = document.createRange();
