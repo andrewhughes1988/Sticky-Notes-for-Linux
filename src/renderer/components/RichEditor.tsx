@@ -155,6 +155,16 @@ export const RichEditor: React.FC<RichEditorProps> = ({
             if (!range.intersectsNode(node)) return NodeFilter.FILTER_REJECT;
             const text = (node.textContent || '').replace(/\u200B/g, '');
             if (text.length === 0) return NodeFilter.FILTER_REJECT;
+
+            // Ensure at least one character of this node is actually inside the range
+            if (range.startContainer === node && range.endContainer === node) {
+              if (range.endOffset <= range.startOffset) return NodeFilter.FILTER_REJECT;
+            } else if (range.startContainer === node) {
+              if (range.startOffset >= (node.textContent || '').length) return NodeFilter.FILTER_REJECT;
+            } else if (range.endContainer === node) {
+              if (range.endOffset <= 0) return NodeFilter.FILTER_REJECT;
+            }
+
             return NodeFilter.FILTER_ACCEPT;
           } catch {
             return NodeFilter.FILTER_REJECT;
@@ -504,9 +514,23 @@ export const RichEditor: React.FC<RichEditorProps> = ({
         while (textNode) {
           const textLen = (textNode.textContent || '').length;
 
-          if (!startNode && currentOffset + textLen >= start) {
-            startNode = textNode;
-            startNodeOffset = start - currentOffset;
+          if (!startNode) {
+            if (currentOffset + textLen > start) {
+              startNode = textNode;
+              startNodeOffset = start - currentOffset;
+            } else if (currentOffset + textLen === start) {
+              const next = treeWalker.nextNode();
+              if (next) {
+                startNode = next;
+                startNodeOffset = 0;
+                textNode = next;
+                currentOffset += textLen;
+                continue;
+              } else {
+                startNode = textNode;
+                startNodeOffset = textLen;
+              }
+            }
           }
 
           if (!endNode && currentOffset + textLen >= end) {
