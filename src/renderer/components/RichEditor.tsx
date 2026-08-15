@@ -44,6 +44,16 @@ export const RichEditor: React.FC<RichEditorProps> = ({
   // State for pending styling on a collapsed caret
   const pendingFormatsRef = useRef<FormatState | null>(null);
 
+  // Action History Stack (Undo/Redo for note body changes)
+  interface HistorySnapshot {
+    html: string;
+    selectionOffsets: { start: number; end: number } | null;
+  }
+  const historyStackRef = useRef<HistorySnapshot[]>([]);
+  const historyIndexRef = useRef<number>(-1);
+  const isUndoingRef = useRef<boolean>(false);
+  const historyDebounceTimerRef = useRef<NodeJS.Timeout | null>(null);
+
   // Helper to extract clean plain text without forcing synchronous style/layout reflows
   const extractPlainText = (element: HTMLElement): string => {
     return (element.textContent || '')
@@ -251,6 +261,112 @@ export const RichEditor: React.FC<RichEditorProps> = ({
     }
   };
 
+  // Helper to get character selection offsets relative to editor root
+  const getSelectionOffsets = (root: HTMLElement): { start: number; end: number } | null => {
+    const sel = window.getSelection();
+    if (!sel || sel.rangeCount === 0) return null;
+    const currentRange = sel.getRangeAt(0);
+
+    const preStartRange = document.createRange();
+    preStartRange.selectNodeContents(root);
+    preStartRange.setEnd(currentRange.startContainer, currentRange.startOffset);
+    const start = preStartRange.toString().length;
+
+    const preEndRange = document.createRange();
+    preEndRange.selectNodeContents(root);
+    preEndRange.setEnd(currentRange.endContainer, currentRange.endOffset);
+    const end = preEndRange.toString().length;
+
+    return { start, end };
+  };
+
+  // Helper to restore character selection offsets relative to editor root
+  const restoreSelectionOffsets = (root: HTMLElement, start: number, end: number) => {
+    const sel = window.getSelection();
+    if (!sel) return;
+
+    let currentOffset = 0;
+    let startNode: Node | null = null;
+    let startNodeOffset = 0;
+    let endNode: Node | null = null;
+    let endNodeOffset = 0;
+
+    const treeWalker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null);
+    let textNode = treeWalker.nextNode();
+
+    while (textNode) {
+      const textLen = (textNode.textContent || '').length;
+
+      if (!startNode) {
+        if (currentOffset + textLen > start) {
+          startNode = textNode;
+          startNodeOffset = start - currentOffset;
+        } else if (currentOffset + textLen === start) {
+          const next = treeWalker.nextNode();
+          if (next) {
+            startNode = next;
+            startNodeOffset = 0;
+            textNode = next;
+            currentOffset += textLen;
+            continue;
+          } else {
+            startNode = textNode;
+            startNodeOffset = textLen;
+          }
+        }
+      }
+
+      if (!endNode && currentOffset + textLen >= end) {
+        endNode = textNode;
+        endNodeOffset = end - currentOffset;
+        break;
+      }
+
+      currentOffset += textLen;
+      textNode = treeWalker.nextNode();
+    }
+
+    if (startNode && endNode) {
+      const newRange = document.createRange();
+      newRange.setStart(startNode, startNodeOffset);
+      newRange.setEnd(endNode, endNodeOffset);
+      sel.removeAllRanges();
+      sel.addRange(newRange);
+    }
+  };
+
+  // Take a snapshot of the editor's current DOM HTML & selection state
+  const takeSnapshot = useCallback((): HistorySnapshot | null => {
+    if (!editorRef.current) return null;
+    return {
+      html: editorRef.current.innerHTML,
+      selectionOffsets: getSelectionOffsets(editorRef.current),
+    };
+  }, []);
+
+  // Push snapshot to history stack
+  const pushHistory = useCallback((options?: { force?: boolean }) => {
+    if (!editorRef.current || isUndoingRef.current) return;
+    const snap = takeSnapshot();
+    if (!snap) return;
+
+    const stack = historyStackRef.current;
+    const idx = historyIndexRef.current;
+
+    if (!options?.force && idx >= 0 && idx < stack.length && stack[idx].html === snap.html) {
+      stack[idx].selectionOffsets = snap.selectionOffsets;
+      return;
+    }
+
+    const newStack = stack.slice(0, idx + 1);
+    newStack.push(snap);
+    if (newStack.length > 100) {
+      newStack.shift();
+    }
+    historyStackRef.current = newStack;
+    historyIndexRef.current = newStack.length - 1;
+  }, [takeSnapshot]);
+
   const applyOrRemoveRangeFormat = (range: Range, command: string, root: HTMLElement) => {
     const key = getCommandKey(command);
     const formatState = getRangeFormatState(range, command, root);
@@ -423,154 +539,75 @@ export const RichEditor: React.FC<RichEditorProps> = ({
     }, 300);
   }, [isComposing, onChange]);
 
-  // Execute formatting command with mutual exclusivity between Checklist and Bullet list
-  const format = useCallback(
-    (command: string, value: string = '') => {
-      if (!editorRef.current) return;
-      editorRef.current.focus();
+  // Undo last action on the note body
+  const undo = useCallback(() => {
+    if (!editorRef.current) return;
+    if (historyDebounceTimerRef.current) {
+      clearTimeout(historyDebounceTimerRef.current);
+      historyDebounceTimerRef.current = null;
+    }
 
-      const selection = window.getSelection();
-      if (!selection || selection.rangeCount === 0) return;
+    const snap = takeSnapshot();
+    const stack = historyStackRef.current;
+    const idx = historyIndexRef.current;
+    if (snap && idx >= 0 && idx < stack.length && stack[idx].html !== snap.html) {
+      pushHistory();
+    }
 
-      // 1. Lists
-      if (command === 'insertUnorderedList') {
-        const checklistItem = getParentChecklistItem(selection.anchorNode);
-        if (checklistItem) {
-          // Mutually exclusive: convert Checklist item directly to a Bullet List
-          const textSpan = (checklistItem.querySelector('.checklist-text') || checklistItem.querySelector('span')) as HTMLElement | null;
-          const innerHtml = textSpan ? textSpan.innerHTML : checklistItem.innerText;
-          const cleanHtml = innerHtml.trim() === '' || innerHtml === '&nbsp;' ? '<br>' : innerHtml;
+    if (historyIndexRef.current <= 0) return;
 
-          const ul = document.createElement('ul');
-          const li = document.createElement('li');
-          li.innerHTML = cleanHtml;
-          ul.appendChild(li);
+    isUndoingRef.current = true;
+    historyIndexRef.current -= 1;
+    const target = historyStackRef.current[historyIndexRef.current];
 
-          checklistItem.parentNode?.replaceChild(ul, checklistItem);
+    editorRef.current.innerHTML = target.html;
+    if (target.selectionOffsets) {
+      restoreSelectionOffsets(
+        editorRef.current,
+        target.selectionOffsets.start,
+        target.selectionOffsets.end
+      );
+    }
 
-          const newRange = document.createRange();
-          newRange.selectNodeContents(li);
-          newRange.collapse(false);
-          selection.removeAllRanges();
-          selection.addRange(newRange);
+    isUndoingRef.current = false;
+    checkFormats();
+    handleContentChange();
+  }, [takeSnapshot, pushHistory, checkFormats, handleContentChange]);
 
-          checkFormats();
-          handleContentChange();
-          return;
-        }
-        document.execCommand(command, false, value);
-        checkFormats();
-        handleContentChange();
-        return;
-      }
+  // Redo last undone action on the note body
+  const redo = useCallback(() => {
+    if (!editorRef.current) return;
+    if (historyDebounceTimerRef.current) {
+      clearTimeout(historyDebounceTimerRef.current);
+      historyDebounceTimerRef.current = null;
+    }
 
-      const key = getCommandKey(command);
-      const range = selection.getRangeAt(0);
+    if (historyIndexRef.current >= historyStackRef.current.length - 1) return;
 
-      // 2. Collapsed Caret Formatting: Toggle independently
-      if (range.collapsed) {
-        const currentFormats = pendingFormatsRef.current || getDomFormatsAtNode(selection.anchorNode, editorRef.current);
-        const nextState = !currentFormats[key];
-        pendingFormatsRef.current = {
-          ...currentFormats,
-          [key]: nextState,
-        };
-        checkFormats();
-        return;
-      }
+    isUndoingRef.current = true;
+    historyIndexRef.current += 1;
+    const target = historyStackRef.current[historyIndexRef.current];
 
-      // 3. Highlighted Range Selection: preserve exact character selection across DOM unwrap/normalize
-      const getSelectionOffsets = (root: HTMLElement): { start: number; end: number } | null => {
-        const sel = window.getSelection();
-        if (!sel || sel.rangeCount === 0) return null;
-        const currentRange = sel.getRangeAt(0);
+    editorRef.current.innerHTML = target.html;
+    if (target.selectionOffsets) {
+      restoreSelectionOffsets(
+        editorRef.current,
+        target.selectionOffsets.start,
+        target.selectionOffsets.end
+      );
+    }
 
-        const preStartRange = document.createRange();
-        preStartRange.selectNodeContents(root);
-        preStartRange.setEnd(currentRange.startContainer, currentRange.startOffset);
-        const start = preStartRange.toString().length;
-
-        const preEndRange = document.createRange();
-        preEndRange.selectNodeContents(root);
-        preEndRange.setEnd(currentRange.endContainer, currentRange.endOffset);
-        const end = preEndRange.toString().length;
-
-        return { start, end };
-      };
-
-      const restoreSelectionOffsets = (root: HTMLElement, start: number, end: number) => {
-        const sel = window.getSelection();
-        if (!sel) return;
-
-        let currentOffset = 0;
-        let startNode: Node | null = null;
-        let startNodeOffset = 0;
-        let endNode: Node | null = null;
-        let endNodeOffset = 0;
-
-        const treeWalker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null);
-        let textNode = treeWalker.nextNode();
-
-        while (textNode) {
-          const textLen = (textNode.textContent || '').length;
-
-          if (!startNode) {
-            if (currentOffset + textLen > start) {
-              startNode = textNode;
-              startNodeOffset = start - currentOffset;
-            } else if (currentOffset + textLen === start) {
-              const next = treeWalker.nextNode();
-              if (next) {
-                startNode = next;
-                startNodeOffset = 0;
-                textNode = next;
-                currentOffset += textLen;
-                continue;
-              } else {
-                startNode = textNode;
-                startNodeOffset = textLen;
-              }
-            }
-          }
-
-          if (!endNode && currentOffset + textLen >= end) {
-            endNode = textNode;
-            endNodeOffset = end - currentOffset;
-            break;
-          }
-
-          currentOffset += textLen;
-          textNode = treeWalker.nextNode();
-        }
-
-        if (startNode && endNode) {
-          const newRange = document.createRange();
-          newRange.setStart(startNode, startNodeOffset);
-          newRange.setEnd(endNode, endNodeOffset);
-          sel.removeAllRanges();
-          sel.addRange(newRange);
-        }
-      };
-
-      const offsets = getSelectionOffsets(editorRef.current);
-      applyOrRemoveRangeFormat(range, command, editorRef.current);
-      editorRef.current.normalize();
-
-      if (offsets) {
-        restoreSelectionOffsets(editorRef.current, offsets.start, offsets.end);
-      }
-
-      pendingFormatsRef.current = null;
-      checkFormats();
-      handleContentChange();
-    },
-    [checkFormats, handleContentChange]
-  );
+    isUndoingRef.current = false;
+    checkFormats();
+    handleContentChange();
+  }, [checkFormats, handleContentChange]);
 
   // Toggle or insert an interactive checklist item
   const toggleChecklist = useCallback(() => {
     if (!editorRef.current) return;
     editorRef.current.focus();
+
+    pushHistory(); // Record state before checklist operation
 
     const selection = window.getSelection();
     if (!selection || selection.rangeCount === 0) return;
@@ -606,6 +643,7 @@ export const RichEditor: React.FC<RichEditorProps> = ({
         selection.addRange(newRange);
       }
 
+      pushHistory();
       checkFormats();
       handleContentChange();
       return;
@@ -627,6 +665,7 @@ export const RichEditor: React.FC<RichEditorProps> = ({
       selection.removeAllRanges();
       selection.addRange(newRange);
 
+      pushHistory();
       checkFormats();
       handleContentChange();
       return;
@@ -661,9 +700,91 @@ export const RichEditor: React.FC<RichEditorProps> = ({
       selection.addRange(newRange);
     }
 
+    pushHistory();
     checkFormats();
     handleContentChange();
-  }, [checkFormats, handleContentChange]);
+  }, [pushHistory, checkFormats, handleContentChange]);
+
+  // Execute a rich formatting command
+  const format = useCallback(
+    (command: string, value?: string) => {
+      if (!editorRef.current) return;
+      editorRef.current.focus();
+
+      pushHistory(); // Record state before format change
+
+      const selection = window.getSelection();
+      if (!selection || selection.rangeCount === 0) return;
+
+      // 1. Lists & Checklists
+      if (command === 'insertChecklist') {
+        toggleChecklist();
+        return;
+      }
+      if (command === 'insertUnorderedList') {
+        const checklistItem = getParentChecklistItem(selection.anchorNode);
+        if (checklistItem) {
+          // Mutually exclusive: convert Checklist item directly to a Bullet List
+          const textSpan = (checklistItem.querySelector('.checklist-text') || checklistItem.querySelector('span')) as HTMLElement | null;
+          const innerHtml = textSpan ? textSpan.innerHTML : checklistItem.innerText;
+          const cleanHtml = innerHtml.trim() === '' || innerHtml === '&nbsp;' ? '<br>' : innerHtml;
+
+          const ul = document.createElement('ul');
+          const li = document.createElement('li');
+          li.innerHTML = cleanHtml;
+          ul.appendChild(li);
+
+          checklistItem.parentNode?.replaceChild(ul, checklistItem);
+
+          const newRange = document.createRange();
+          newRange.selectNodeContents(li);
+          newRange.collapse(false);
+          selection.removeAllRanges();
+          selection.addRange(newRange);
+
+          pushHistory();
+          checkFormats();
+          handleContentChange();
+          return;
+        }
+        document.execCommand(command, false, value);
+        pushHistory();
+        checkFormats();
+        handleContentChange();
+        return;
+      }
+
+      const key = getCommandKey(command);
+      const range = selection.getRangeAt(0);
+
+      // 2. Collapsed Caret Formatting: Toggle independently
+      if (range.collapsed) {
+        const currentFormats = pendingFormatsRef.current || getDomFormatsAtNode(selection.anchorNode, editorRef.current);
+        const nextState = !currentFormats[key];
+        pendingFormatsRef.current = {
+          ...currentFormats,
+          [key]: nextState,
+        };
+        checkFormats();
+        return;
+      }
+
+      // 3. Highlighted Range Selection: preserve exact character selection across DOM unwrap/normalize
+      const offsets = getSelectionOffsets(editorRef.current);
+      applyOrRemoveRangeFormat(range, command, editorRef.current);
+      editorRef.current.normalize();
+
+      if (offsets) {
+        restoreSelectionOffsets(editorRef.current, offsets.start, offsets.end);
+      }
+
+      pendingFormatsRef.current = null;
+      pushHistory(); // Record state after format change
+      checkFormats();
+      handleContentChange();
+    },
+    [pushHistory, toggleChecklist, checkFormats, handleContentChange]
+  );
 
   // Expose formatting and flush APIs to parent
   useEffect(() => {
@@ -691,12 +812,35 @@ export const RichEditor: React.FC<RichEditorProps> = ({
       if (editorRef.current.innerHTML !== sanitized) {
         editorRef.current.innerHTML = sanitized;
       }
+      pushHistory({ force: true });
     }
   }, []);
 
   // Keyboard listener for shortcuts and checklist enter/backspace handling
   const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
-    // 1. Formatting shortcuts
+    // 1. Action History Shortcuts (only applies to note body changes)
+    if (e.ctrlKey || e.metaKey) {
+      if ((e.key === 'z' || e.key === 'Z') && !e.shiftKey) {
+        e.preventDefault();
+        undo();
+        return;
+      }
+      if (e.key === 'y' || e.key === 'Y' || ((e.key === 'z' || e.key === 'Z') && e.shiftKey)) {
+        e.preventDefault();
+        redo();
+        return;
+      }
+    }
+
+    // 2. Destructive Key Handling: Backspace / Delete on non-collapsed selections
+    if (e.key === 'Backspace' || e.key === 'Delete') {
+      const sel = window.getSelection();
+      if (sel && !sel.isCollapsed && sel.rangeCount > 0) {
+        pushHistory();
+      }
+    }
+
+    // 3. Formatting shortcuts
     if (e.ctrlKey || e.metaKey) {
       if (e.key === 'b' || e.key === 'B') {
         e.preventDefault();
@@ -992,6 +1136,27 @@ export const RichEditor: React.FC<RichEditorProps> = ({
     }
     checkFormats();
   };
+  const handleInput = () => {
+    if (isComposing) return;
+    handleContentChange();
+    checkFormats();
+
+    if (historyDebounceTimerRef.current) {
+      clearTimeout(historyDebounceTimerRef.current);
+    }
+    historyDebounceTimerRef.current = setTimeout(() => {
+      pushHistory();
+    }, 400);
+  };
+
+  const handleBlur = () => {
+    if (historyDebounceTimerRef.current) {
+      clearTimeout(historyDebounceTimerRef.current);
+      historyDebounceTimerRef.current = null;
+    }
+    pushHistory();
+    flush();
+  };
 
   return (
     <div className="note-editor-wrapper app-no-drag">
@@ -1004,9 +1169,9 @@ export const RichEditor: React.FC<RichEditorProps> = ({
         autoCorrect="off"
         autoCapitalize="off"
         data-placeholder={placeholder}
-        onBlur={flush}
+        onBlur={handleBlur}
         onPaste={handlePaste}
-        onInput={handleContentChange}
+        onInput={handleInput}
         onKeyUp={handleSelectionReset}
         onMouseUp={handleSelectionReset}
         onKeyDown={handleKeyDown}
@@ -1014,7 +1179,7 @@ export const RichEditor: React.FC<RichEditorProps> = ({
         onCompositionStart={() => setIsComposing(true)}
         onCompositionEnd={() => {
           setIsComposing(false);
-          handleContentChange();
+          handleInput();
         }}
       />
     </div>
