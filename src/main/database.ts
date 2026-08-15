@@ -118,7 +118,7 @@ export class DatabaseService {
         content_rowid='rowid'
       );
 
-      CREATE TRIGGER IF NOT EXISTS notes_ai AFTER INSERT ON notes BEGIN
+      CREATE TRIGGER IF NOT EXISTS notes_ai AFTER INSERT ON notes WHEN new.deleted_at IS NULL BEGIN
         INSERT INTO notes_fts(rowid, id, content_plain) VALUES (new.rowid, new.id, new.content_plain);
       END;
 
@@ -128,7 +128,9 @@ export class DatabaseService {
 
       CREATE TRIGGER IF NOT EXISTS notes_au AFTER UPDATE ON notes BEGIN
         INSERT INTO notes_fts(notes_fts, rowid, id, content_plain) VALUES('delete', old.rowid, old.id, old.content_plain);
-        INSERT INTO notes_fts(rowid, id, content_plain) VALUES (new.rowid, new.id, new.content_plain);
+        INSERT INTO notes_fts(rowid, id, content_plain)
+          SELECT new.rowid, new.id, new.content_plain
+          WHERE new.deleted_at IS NULL;
       END;
 
       CREATE TABLE IF NOT EXISTS settings (
