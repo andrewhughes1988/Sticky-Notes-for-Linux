@@ -716,18 +716,14 @@ export const RichEditor: React.FC<RichEditorProps> = ({
     let curr: Node | null = container;
     while (curr && curr !== root) {
       const parent: Node | null = curr.parentNode;
-      if (!parent || parent === root) break;
+      if (!parent) break;
+      const grandParent: Node | null = parent.parentNode;
 
-      if (parent.nodeType === Node.ELEMENT_NODE && hasUnwantedFormat(parent as HTMLElement)) {
+      if (parent.nodeType === Node.ELEMENT_NODE && parent !== root && hasUnwantedFormat(parent as HTMLElement)) {
         const parentEl = parent as HTMLElement;
         const rightParent = parentEl.cloneNode(false) as HTMLElement;
 
-        let sibling: Node | null = null;
-        if (curr.nodeType === Node.TEXT_NODE && offset === 0) {
-          sibling = curr;
-        } else {
-          sibling = curr.nextSibling;
-        }
+        let sibling: Node | null = (curr.nodeType === Node.TEXT_NODE && offset === 0) ? curr : curr.nextSibling;
 
         while (sibling) {
           const next = sibling.nextSibling;
@@ -735,8 +731,8 @@ export const RichEditor: React.FC<RichEditorProps> = ({
           sibling = next;
         }
 
-        if (parentEl.parentNode) {
-          parentEl.parentNode.insertBefore(rightParent, parentEl.nextSibling);
+        if (grandParent) {
+          grandParent.insertBefore(rightParent, parentEl.nextSibling);
         }
 
         // Clean up empty split halves
@@ -747,91 +743,86 @@ export const RichEditor: React.FC<RichEditorProps> = ({
           rightParent.remove();
         }
 
-        container = parentEl.parentNode || root;
-        offset = Array.prototype.indexOf.call(container.childNodes, parentEl) + 1;
-        curr = container;
+        curr = grandParent;
       } else {
         curr = parent;
       }
     }
 
-    return { container, offset };
+    return { container: curr || root, offset: 0 };
   };
 
-  // Handle text insertion when pendingFormats are active on collapsed caret
-  const handleBeforeInput = (e: React.FormEvent<HTMLDivElement>) => {
-    const inputEvent = e.nativeEvent as InputEvent;
-    if (inputEvent.inputType === 'insertText' && inputEvent.data && pendingFormatsRef.current && editorRef.current) {
-      e.preventDefault();
-      const selection = window.getSelection();
-      if (!selection || selection.rangeCount === 0) return;
+  // Attach native beforeinput listener to intercept typing when pendingFormats are active
+  useEffect(() => {
+    const el = editorRef.current;
+    if (!el) return;
 
-      const range = selection.getRangeAt(0);
-      range.deleteContents();
+    const onNativeBeforeInput = (e: InputEvent) => {
+      if (e.inputType === 'insertText' && e.data && pendingFormatsRef.current && editorRef.current) {
+        e.preventDefault();
+        const selection = window.getSelection();
+        if (!selection || selection.rangeCount === 0) return;
 
-      const formats = pendingFormatsRef.current;
-      const text = inputEvent.data;
+        const range = selection.getRangeAt(0);
+        range.deleteContents();
 
-      // 1. Split away any ancestor tags that contain styles the user untoggled
-      const splitPoint = splitUnwantedAncestors(range, formats, editorRef.current);
+        const formats = pendingFormatsRef.current;
+        const text = e.data;
 
-      // 2. Check which wanted formats are still missing at splitPoint
-      const currentAtPoint = getDomFormatsAtNode(splitPoint.container, editorRef.current);
+        // 1. Split away any ancestor tags that contain styles the user untoggled
+        const splitPoint = splitUnwantedAncestors(range, formats, editorRef.current);
 
-      const needBold = formats.bold && !currentAtPoint.bold;
-      const needItalic = formats.italic && !currentAtPoint.italic;
-      const needUnderline = formats.underline && !currentAtPoint.underline;
-      const needStrike = formats.strike && !currentAtPoint.strike;
+        // 2. Build the styled wrapper or plain text node according to formats
+        const textNode = document.createTextNode(text);
+        let insertNode: Node = textNode;
 
-      const needsWrapper = needBold || needItalic || needUnderline || needStrike;
-
-      let insertNode: Node;
-      const textNode = document.createTextNode(text);
-
-      if (needsWrapper) {
         let rootEl: HTMLElement | null = null;
         let leafEl: HTMLElement | null = null;
 
         const wrapInTag = (tagName: string) => {
-          const el = document.createElement(tagName);
-          if (!rootEl) rootEl = el;
-          if (leafEl) leafEl.appendChild(el);
-          leafEl = el;
+          const wrapper = document.createElement(tagName);
+          if (!rootEl) rootEl = wrapper;
+          if (leafEl) leafEl.appendChild(wrapper);
+          leafEl = wrapper;
         };
 
-        if (needBold) wrapInTag('strong');
-        if (needItalic) wrapInTag('em');
-        if (needUnderline) wrapInTag('u');
-        if (needStrike) wrapInTag('s');
+        if (formats.bold) wrapInTag('strong');
+        if (formats.italic) wrapInTag('em');
+        if (formats.underline) wrapInTag('u');
+        if (formats.strike) wrapInTag('s');
 
-        leafEl!.appendChild(textNode);
-        insertNode = rootEl!;
-      } else {
-        insertNode = textNode;
+        if (rootEl && leafEl) {
+          (leafEl as HTMLElement).appendChild(textNode);
+          insertNode = rootEl;
+        }
+
+        // 3. Insert into the split container
+        if (splitPoint.container === editorRef.current) {
+          editorRef.current.appendChild(insertNode);
+        } else if (splitPoint.container.parentNode) {
+          splitPoint.container.parentNode.insertBefore(insertNode, splitPoint.container.nextSibling);
+        } else {
+          editorRef.current.appendChild(insertNode);
+        }
+
+        // 4. Place caret immediately after the inserted text
+        const newRange = document.createRange();
+        newRange.setStart(textNode, text.length);
+        newRange.collapse(true);
+        selection.removeAllRanges();
+        selection.addRange(newRange);
+
+        pendingFormatsRef.current = null;
+        handleContentChange();
+        checkFormats();
       }
+    };
 
-      // 3. Insert into the split container
-      if (splitPoint.container.nodeType === Node.TEXT_NODE) {
-        const p = splitPoint.container.parentNode || editorRef.current;
-        p.insertBefore(insertNode, splitPoint.container.nextSibling);
-      } else {
-        const targetParent = splitPoint.container as HTMLElement;
-        const refChild = targetParent.childNodes[splitPoint.offset] || null;
-        targetParent.insertBefore(insertNode, refChild);
-      }
-
-      // 4. Place caret immediately after the inserted text
-      const newRange = document.createRange();
-      newRange.setStart(textNode, text.length);
-      newRange.collapse(true);
-      selection.removeAllRanges();
-      selection.addRange(newRange);
-
-      pendingFormatsRef.current = null;
-      handleContentChange();
-      checkFormats();
-    }
-  };
+    el.addEventListener('beforeinput', onNativeBeforeInput);
+    return () => {
+      el.removeEventListener('beforeinput', onNativeBeforeInput);
+    };
+  }, [checkFormats, handleContentChange]);
 
   const handleSelectionReset = (e: React.SyntheticEvent) => {
     if ('key' in e) {
@@ -855,7 +846,6 @@ export const RichEditor: React.FC<RichEditorProps> = ({
         data-placeholder={placeholder}
         onBlur={flush}
         onPaste={handlePaste}
-        onBeforeInput={handleBeforeInput}
         onInput={handleContentChange}
         onKeyUp={handleSelectionReset}
         onMouseUp={handleSelectionReset}
