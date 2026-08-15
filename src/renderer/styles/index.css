@@ -298,32 +298,44 @@ html, body, #root {
   width: 16px;
   height: 16px;
   border: 1.5px solid rgba(0, 0, 0, 0.45);
-  border-radius: 3px;
+  border-radius: 4px;
   cursor: pointer;
-  margin-top: 3px;
+  margin-top: 3.5px;
   position: relative;
   flex-shrink: 0;
-  background: transparent;
+  background-color: transparent;
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: 11px 11px;
   outline: none;
-  transition: background-color 0.12s ease, border-color 0.12s ease;
+  transition: all 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.checklist-checkbox:hover {
+  border-color: #0078D4;
+  background-color: rgba(0, 120, 212, 0.08);
 }
 
 .dark .checklist-checkbox {
   border-color: rgba(255, 255, 255, 0.5);
 }
 
+.dark .checklist-checkbox:hover {
+  border-color: #60CDFF;
+  background-color: rgba(96, 205, 255, 0.12);
+}
+
 .checklist-checkbox:checked {
   background-color: #0078D4;
   border-color: #0078D4;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23FFFFFF' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='3.5 8.5 6.5 11.5 12.5 4.5'/%3E%3C/svg%3E");
+  transform: scale(1.02);
 }
 
-.checklist-checkbox:checked::after {
-  content: "✔";
-  color: white;
-  font-size: 11px;
-  position: absolute;
-  top: -1px;
-  left: 2px;
+.dark .checklist-checkbox:checked {
+  background-color: #0078D4;
+  border-color: #0078D4;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23FFFFFF' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='3.5 8.5 6.5 11.5 12.5 4.5'/%3E%3C/svg%3E");
 }
 
 .checklist-text {
@@ -331,12 +343,13 @@ html, body, #root {
   min-width: 0;
   word-break: break-word;
   outline: none;
+  transition: opacity 0.15s ease, text-decoration 0.15s ease;
 }
 
 .checklist-item.checked .checklist-text,
 .checklist-item.checked span {
   text-decoration: line-through;
-  opacity: 0.6;
+  opacity: 0.55;
 }
 
 /* Bottom Formatting Toolbar */
