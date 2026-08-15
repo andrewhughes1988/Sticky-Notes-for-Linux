@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { Note } from '../../shared/types';
 import { NoteCard } from './NoteCard';
 import { DeleteModal } from './DeleteModal';
@@ -9,6 +9,9 @@ export const ManagerView: React.FC = () => {
   const [notes, setNotes] = useState<Note[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [noteToDelete, setNoteToDelete] = useState<string | null>(null);
+  const searchQueryRef = useRef(searchQuery);
+  searchQueryRef.current = searchQuery;
+  const lastQueryIdRef = useRef(0);
 
   // Initialize theme from localStorage, or fallback to desktop system default
   const [isDarkMode, setIsDarkMode] = useState<boolean>(() => {
@@ -48,25 +51,35 @@ export const ManagerView: React.FC = () => {
   };
 
   const fetchNotes = useCallback(async (query: string = '') => {
+    const queryId = ++lastQueryIdRef.current;
     try {
       const data = await window.stickyNotesAPI.getAllNotes({
         search: query,
         includeClosed: true,
       });
-      setNotes(data);
+      if (queryId === lastQueryIdRef.current) {
+        setNotes(data);
+      }
     } catch (err) {
       console.error('Failed to load notes in manager:', err);
     }
   }, []);
 
+  // Debounced search query trigger
   useEffect(() => {
-    fetchNotes(searchQuery);
+    const timer = setTimeout(() => {
+      fetchNotes(searchQuery);
+    }, 150);
+    return () => clearTimeout(timer);
+  }, [fetchNotes, searchQuery]);
 
+  // IPC Event subscriptions
+  useEffect(() => {
     let refreshTimeout: NodeJS.Timeout | null = null;
     const debouncedRefresh = () => {
       if (refreshTimeout) clearTimeout(refreshTimeout);
       refreshTimeout = setTimeout(() => {
-        fetchNotes(searchQuery);
+        fetchNotes(searchQueryRef.current);
       }, 150);
     };
 
@@ -78,12 +91,10 @@ export const ManagerView: React.FC = () => {
       unsubChanged();
       unsubDeleted();
     };
-  }, [fetchNotes, searchQuery]);
+  }, [fetchNotes]);
 
   const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const val = e.target.value;
-    setSearchQuery(val);
-    fetchNotes(val);
+    setSearchQuery(e.target.value);
   };
 
   const handleCreateNote = useCallback(async () => {
