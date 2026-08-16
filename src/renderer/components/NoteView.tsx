@@ -30,31 +30,40 @@ export const NoteView: React.FC<NoteViewProps> = ({ noteId }) => {
     flush: () => void;
   } | null>(null);
 
+  const setEditorApi = useCallback((api: any) => {
+    editorApiRef.current = api;
+  }, []);
+
   // Load note data on mount
   useEffect(() => {
+    let isMounted = true;
     window.stickyNotesAPI.getNote(noteId).then((data) => {
+      if (!isMounted) return;
       if (data) {
         setNote(data);
+      } else {
+        // If note is missing from DB, create a default note record
+        window.stickyNotesAPI.createNote({ id: noteId, color: 'yellow' }).then((created) => {
+          if (isMounted && created) setNote(created);
+        });
       }
     });
 
     const unsubscribe = window.stickyNotesAPI.onNoteUpdated((updatedNote) => {
-      if (updatedNote.id === noteId) {
+      if (isMounted && updatedNote.id === noteId) {
         setNote((prev) => (prev ? { ...prev, ...updatedNote } : updatedNote));
       }
     });
 
     return () => {
+      isMounted = false;
       unsubscribe();
     };
   }, [noteId]);
 
-  if (!note) {
-    return <div style={{ height: '100%', background: '#FFF9C4' }} />;
-  }
-
-  const themeDef = NOTE_COLORS[note.color] || NOTE_COLORS.yellow;
-  const isDark = note.color === 'charcoal'; // or match system theme
+  const activeColor = note?.color || 'yellow';
+  const themeDef = NOTE_COLORS[activeColor] || NOTE_COLORS.yellow;
+  const isDark = activeColor === 'charcoal';
   const currentTheme = isDark ? themeDef.dark : themeDef.light;
 
   const handleColorChange = useCallback((newColor: NoteColor) => {
@@ -122,7 +131,7 @@ export const NoteView: React.FC<NoteViewProps> = ({ noteId }) => {
         }
       >
         <NoteHeader
-          isPinned={note.is_pinned === 1}
+          isPinned={Boolean(note?.is_pinned)}
           onNewNote={handleNewNote}
           onTogglePin={handleTogglePin}
           onToggleMenu={() => setIsMenuOpen(!isMenuOpen)}
@@ -133,7 +142,7 @@ export const NoteView: React.FC<NoteViewProps> = ({ noteId }) => {
       {/* Color & Actions Menu Popover */}
       {isMenuOpen && (
         <ColorPicker
-          currentColor={note.color}
+          currentColor={activeColor}
           onSelectColor={handleColorChange}
           onOpenManager={() => window.stickyNotesAPI.showManagerWindow()}
           onDeleteNote={() => setIsDeleteModalOpen(true)}
@@ -143,13 +152,11 @@ export const NoteView: React.FC<NoteViewProps> = ({ noteId }) => {
 
       {/* Rich Editor */}
       <RichEditor
-        initialHtml={note.content_html}
+        initialHtml={note?.content_html || ''}
         placeholder="Take a note..."
         onChange={handleContentChange}
         onFormatChange={setActiveFormats}
-        editorRefExpose={(api) => {
-          editorApiRef.current = api;
-        }}
+        editorRefExpose={setEditorApi}
       />
 
       {/* Bottom Formatting Toolbar */}

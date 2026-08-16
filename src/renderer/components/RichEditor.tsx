@@ -805,7 +805,7 @@ export const RichEditor: React.FC<RichEditorProps> = ({
     };
   }, [flush]);
 
-  // Initial HTML mount
+  // Initial HTML mount and dynamic updates
   useEffect(() => {
     if (editorRef.current && initialHtml !== undefined) {
       const sanitized = sanitizeHtml(initialHtml);
@@ -814,7 +814,7 @@ export const RichEditor: React.FC<RichEditorProps> = ({
       }
       pushHistory({ force: true });
     }
-  }, []);
+  }, [initialHtml, pushHistory]);
 
   // Keyboard listener for shortcuts and checklist enter/backspace handling
   const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
