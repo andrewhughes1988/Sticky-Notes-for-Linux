@@ -13,7 +13,6 @@ A lightweight, beautiful, and distraction-free Sticky Notes app for Linux, inspi
 - **Notes List & Instant Search** — Easily search and browse all your open and closed notes from the central Notes List.
 - **Automatic State Restoration** — Your open desktop notes and their exact positions are remembered and restored when you reopen the app.
 - **System Tray Integration** — Access your notes, create new notes, or show/hide all notes directly from your desktop system tray.
-- **Private & 100% Offline** — All your notes stay private on your computer with zero cloud telemetry or internet tracking.
 
 ---
 
