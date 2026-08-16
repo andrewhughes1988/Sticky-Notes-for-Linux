@@ -10,7 +10,7 @@ interface ColorPickerProps {
   onClose: () => void;
 }
 
-export const ColorPicker: React.FC<ColorPickerProps> = ({
+const ColorPickerComponent: React.FC<ColorPickerProps> = ({
   currentColor,
   onSelectColor,
   onOpenManager,
@@ -84,3 +84,5 @@ export const ColorPicker: React.FC<ColorPickerProps> = ({
     </>
   );
 };
+
+export const ColorPicker = React.memo(ColorPickerComponent);

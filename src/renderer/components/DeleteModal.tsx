@@ -6,7 +6,7 @@ interface DeleteModalProps {
   onCancel: () => void;
 }
 
-export const DeleteModal: React.FC<DeleteModalProps> = ({ isOpen, onConfirm, onCancel }) => {
+const DeleteModalComponent: React.FC<DeleteModalProps> = ({ isOpen, onConfirm, onCancel }) => {
   if (!isOpen) return null;
 
   return (
@@ -28,3 +28,5 @@ export const DeleteModal: React.FC<DeleteModalProps> = ({ isOpen, onConfirm, onC
     </div>
   );
 };
+
+export const DeleteModal = React.memo(DeleteModalComponent);

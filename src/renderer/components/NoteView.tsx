@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { Note, NoteColor, NOTE_COLORS } from '../../shared/types';
 import { NoteHeader } from './NoteHeader';
 import { ColorPicker } from './ColorPicker';
@@ -57,38 +57,40 @@ export const NoteView: React.FC<NoteViewProps> = ({ noteId }) => {
   const isDark = note.color === 'charcoal'; // or match system theme
   const currentTheme = isDark ? themeDef.dark : themeDef.light;
 
-  const handleColorChange = (newColor: NoteColor) => {
+  const handleColorChange = useCallback((newColor: NoteColor) => {
+    if (!note) return;
     editorApiRef.current?.flush();
     setNote((prev) => (prev ? { ...prev, color: newColor } : null));
     window.stickyNotesAPI.updateNote(note.id, { color: newColor });
-  };
+  }, [note]);
 
-  const handleContentChange = (html: string, plain: string) => {
-    window.stickyNotesAPI.updateNote(note.id, {
+  const handleContentChange = useCallback((html: string, plain: string) => {
+    window.stickyNotesAPI.updateNote(noteId, {
       content_html: html,
       content_plain: plain,
     });
-  };
+  }, [noteId]);
 
-  const handleTogglePin = async () => {
+  const handleTogglePin = useCallback(async () => {
+    if (!note) return;
     const newPinned = await window.stickyNotesAPI.togglePin(note.id);
     setNote((prev) => (prev ? { ...prev, is_pinned: newPinned ? 1 : 0 } : null));
-  };
+  }, [note]);
 
-  const handleNewNote = () => {
+  const handleNewNote = useCallback(() => {
     editorApiRef.current?.flush();
-    window.stickyNotesAPI.createNote({ color: note.color });
-  };
+    window.stickyNotesAPI.createNote({ color: note?.color || 'yellow' });
+  }, [note?.color]);
 
-  const handleCloseNote = () => {
+  const handleCloseNote = useCallback(() => {
     editorApiRef.current?.flush();
-    window.stickyNotesAPI.closeNoteWindow(note.id);
-  };
+    window.stickyNotesAPI.closeNoteWindow(noteId);
+  }, [noteId]);
 
-  const handleConfirmDelete = () => {
+  const handleConfirmDelete = useCallback(() => {
     setIsDeleteModalOpen(false);
-    window.stickyNotesAPI.deleteNote(note.id);
-  };
+    window.stickyNotesAPI.deleteNote(noteId);
+  }, [noteId]);
 
   return (
     <div

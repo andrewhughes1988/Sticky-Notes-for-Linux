@@ -10,7 +10,7 @@ interface NoteHeaderProps {
   onCloseNote: () => void;
 }
 
-export const NoteHeader: React.FC<NoteHeaderProps> = ({
+const NoteHeaderComponent: React.FC<NoteHeaderProps> = ({
   isPinned,
   onNewNote,
   onTogglePin,
@@ -67,3 +67,5 @@ export const NoteHeader: React.FC<NoteHeaderProps> = ({
     </div>
   );
 };
+
+export const NoteHeader = React.memo(NoteHeaderComponent);

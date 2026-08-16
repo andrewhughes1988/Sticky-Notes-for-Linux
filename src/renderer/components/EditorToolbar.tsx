@@ -14,7 +14,7 @@ interface EditorToolbarProps {
   onInsertChecklist: () => void;
 }
 
-export const EditorToolbar: React.FC<EditorToolbarProps> = ({
+const EditorToolbarComponent: React.FC<EditorToolbarProps> = ({
   onFormat,
   activeFormats,
   onInsertChecklist,
@@ -95,3 +95,5 @@ export const EditorToolbar: React.FC<EditorToolbarProps> = ({
     </div>
   );
 };
+
+export const EditorToolbar = React.memo(EditorToolbarComponent);
