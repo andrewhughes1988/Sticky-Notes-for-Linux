@@ -31,7 +31,7 @@ const note2 = dbService.createNote({
 });
 console.log('Created note 2 (closed):', note2.id, note2.title, note2.color);
 
-// 3. Test Full-Text Search (FTS5)
+// 3. Test Full-Text Search (FTS5) - Single word, multi-word, and special characters
 const searchResults = dbService.getAllNotes({ search: 'Parrot' });
 console.log(`FTS search for 'Parrot' found ${searchResults.length} note(s). Match ID:`, searchResults[0]?.id);
 if (searchResults.length !== 1 || searchResults[0]?.id !== note1.id) {
@@ -42,6 +42,20 @@ const groceryResults = dbService.getAllNotes({ search: 'Coffee' });
 console.log(`FTS search for 'Coffee' found ${groceryResults.length} note(s). Match ID:`, groceryResults[0]?.id);
 if (groceryResults.length !== 1 || groceryResults[0]?.id !== note2.id) {
   throw new Error('FTS search test failed for grocery!');
+}
+
+// Test multi-word non-adjacent search (e.g. "Parrot Sticky")
+const multiWordResults = dbService.getAllNotes({ search: 'Parrot Sticky' });
+console.log(`FTS multi-word search for 'Parrot Sticky' found ${multiWordResults.length} note(s).`);
+if (multiWordResults.length !== 1 || multiWordResults[0]?.id !== note1.id) {
+  throw new Error('Multi-word search test failed!');
+}
+
+// Test special characters in search (e.g. quotes, colons, stars)
+const specialCharResults = dbService.getAllNotes({ search: 'Parrot* "Sticky":' });
+console.log(`FTS special char search found ${specialCharResults.length} note(s).`);
+if (specialCharResults.length !== 1 || specialCharResults[0]?.id !== note1.id) {
+  throw new Error('Special characters search test failed!');
 }
 
 // 4. Test Update

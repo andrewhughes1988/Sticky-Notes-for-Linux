@@ -10,6 +10,11 @@ app.commandLine.appendSwitch('ozone-platform-hint', 'auto');
 app.commandLine.appendSwitch('enable-features', 'WaylandWindowDecorations');
 app.commandLine.appendSwitch('log-level', '3'); // Suppress benign Chromium internal VSync notices
 
+app.setName('Sticky Notes');
+if (process.platform === 'win32' || process.platform === 'linux') {
+  app.setAppUserModelId('com.netsysprep.stickynotes');
+}
+
 // Ensure single instance
 const gotTheLock = app.requestSingleInstanceLock();
 if (!gotTheLock) {
@@ -22,7 +27,7 @@ if (!gotTheLock) {
 
   app.on('second-instance', () => {
     if (windowManager) {
-      windowManager.showManagerWindow();
+      windowManager.restoreOpenNotes();
     }
   });
 
@@ -62,14 +67,17 @@ if (!gotTheLock) {
     }
   });
 
-  // Keep app running in the system tray when all note windows are closed
+  // When all windows are closed, exit cleanly so note state and bounds are preserved for next launch
   app.on('window-all-closed', () => {
-    // On Linux desktop, app stays active in tray
+    app.quit();
   });
 
   const handleGracefulShutdown = () => {
     try {
-      if (windowManager) windowManager.flushAllOpenNoteBounds();
+      if (windowManager) {
+        windowManager.setQuitting(true);
+        windowManager.flushAllOpenNoteBounds();
+      }
       if (trayService) trayService.destroy();
       if (db) db.close();
     } catch {
@@ -82,7 +90,10 @@ if (!gotTheLock) {
   process.on('SIGINT', handleGracefulShutdown);
 
   app.on('before-quit', () => {
-    if (windowManager) windowManager.flushAllOpenNoteBounds();
+    if (windowManager) {
+      windowManager.setQuitting(true);
+      windowManager.flushAllOpenNoteBounds();
+    }
     if (trayService) trayService.destroy();
     if (db) db.close();
   });

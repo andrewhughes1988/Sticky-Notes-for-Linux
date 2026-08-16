@@ -6,15 +6,20 @@ import { WindowManager } from './windowManager';
 export class TrayService {
   private tray: Tray | null = null;
   private windowManager: WindowManager;
-  private cachedIcon: Electron.NativeImage | null = null;
 
   constructor(windowManager: WindowManager) {
     this.windowManager = windowManager;
   }
 
   public init(): void {
-    const icon = this.createTrayIcon();
-    this.tray = new Tray(icon);
+    const iconPath = this.resolveTrayIconPath();
+    if (iconPath) {
+      this.tray = new Tray(iconPath);
+    } else {
+      const fallbackImage = this.createFallbackIcon();
+      this.tray = new Tray(fallbackImage);
+    }
+
     this.tray.setToolTip('Sticky Notes');
 
     this.tray.on('click', () => {
@@ -65,19 +70,46 @@ export class TrayService {
     this.tray.setContextMenu(contextMenu);
   }
 
-  private createTrayIcon(): Electron.NativeImage {
-    if (this.cachedIcon) {
-      return this.cachedIcon;
+  private resolveTrayIconPath(): string {
+    // 1. Check system installed icon paths
+    const systemPaths = [
+      '/usr/share/icons/hicolor/24x24/apps/com.netsysprep.stickynotes.png',
+      '/usr/share/icons/hicolor/32x32/apps/com.netsysprep.stickynotes.png',
+      '/usr/share/icons/hicolor/48x48/apps/com.netsysprep.stickynotes.png',
+      '/usr/share/icons/hicolor/24x24/apps/sticky-notes-linux.png',
+    ];
+    for (const p of systemPaths) {
+      if (fs.existsSync(p)) return p;
     }
 
-    const trayIconPath = path.join(__dirname, '../../build/tray-icon.png');
-    if (fs.existsSync(trayIconPath)) {
-      const img = nativeImage.createFromPath(trayIconPath);
-      this.cachedIcon = img.resize({ width: 22, height: 22 });
-      return this.cachedIcon;
+    // 2. In packaged app (process.resourcesPath)
+    if (app.isPackaged) {
+      const packagedPaths = [
+        path.join(process.resourcesPath, 'build', 'icons', '24x24.png'),
+        path.join(process.resourcesPath, 'build', 'tray-icon.png'),
+        path.join(process.resourcesPath, 'build', 'icons', '32x32.png'),
+        path.join(process.resourcesPath, 'build', 'icon.png'),
+      ];
+      for (const p of packagedPaths) {
+        if (fs.existsSync(p)) return p;
+      }
     }
 
-    // Fallback vector icon
+    // 3. In dev mode
+    const devPaths = [
+      path.join(__dirname, '../../build/icons/24x24.png'),
+      path.join(__dirname, '../../build/tray-icon.png'),
+      path.join(__dirname, '../../build/icon.png'),
+    ];
+    for (const p of devPaths) {
+      if (fs.existsSync(p)) return p;
+    }
+
+    return '';
+  }
+
+  private createFallbackIcon(): Electron.NativeImage {
+    // Fallback vector icon if no png file exists on disk
     const svgString = `
       <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 22 22">
         <rect x="2" y="2" width="18" height="18" rx="3" fill="#FFD600" />
@@ -88,9 +120,7 @@ export class TrayService {
       </svg>
     `;
     const base64 = Buffer.from(svgString).toString('base64');
-    const image = nativeImage.createFromDataURL(`data:image/svg+xml;base64,${base64}`);
-    this.cachedIcon = image.resize({ width: 20, height: 20 });
-    return this.cachedIcon;
+    return nativeImage.createFromDataURL(`data:image/svg+xml;base64,${base64}`).resize({ width: 22, height: 22 });
   }
 
   public destroy(): void {

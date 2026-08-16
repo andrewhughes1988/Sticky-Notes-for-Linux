@@ -1,5 +1,5 @@
 {
-  "name": "sticky-notes-linux",
+  "name": "com.netsysprep.stickynotes",
   "version": "1.0.0",
   "description": "Pixel-faithful Windows Sticky Notes app for Linux with local database and cloud sync readiness",
   "main": "dist-electron/main/main.js",
@@ -21,7 +21,10 @@
     "wayland",
     "offline-first"
   ],
-  "author": "",
+  "author": {
+    "name": "Andrew Hughes",
+    "email": "your-email@example.com"
+  },
   "license": "MIT",
   "dependencies": {
     "better-sqlite3": "^11.8.1",
@@ -46,7 +49,7 @@
     "vite-plugin-electron-renderer": "^0.14.6"
   },
   "build": {
-    "appId": "com.stickynotes.linux",
+    "appId": "com.netsysprep.stickynotes",
     "productName": "Sticky Notes",
     "directories": {
       "output": "release"
@@ -55,12 +58,47 @@
       "dist/**/*",
       "dist-electron/**/*"
     ],
+    "extraResources": [
+      {
+        "from": "build",
+        "to": "build",
+        "filter": ["*.png", "icons/*.png"]
+      }
+    ],
     "linux": {
       "target": [
         "AppImage",
         "deb"
       ],
-      "category": "Utility"
+      "category": "Utility",
+      "icon": "build/icons",
+      "executableName": "sticky-notes-linux",
+      "desktop": {
+        "entry": {
+          "Icon": "com.netsysprep.stickynotes",
+          "StartupWMClass": "com.netsysprep.stickynotes"
+        }
+      },
+      "synopsis": "Sticky Notes app for Linux",
+      "description": "A Sticky Notes app for Linux with local database"
+    },
+    "deb": {
+      "packageName": "sticky-notes-linux",
+      "artifactName": "sticky-notes-linux_${version}_${arch}.${ext}",
+      "fpm": [
+        "build/metainfo/com.netsysprep.stickynotes.metainfo.xml=/usr/share/metainfo/com.netsysprep.stickynotes.metainfo.xml",
+        "build/icons/16x16.png=/usr/share/icons/hicolor/16x16/apps/com.netsysprep.stickynotes.png",
+        "build/icons/24x24.png=/usr/share/icons/hicolor/24x24/apps/com.netsysprep.stickynotes.png",
+        "build/icons/32x32.png=/usr/share/icons/hicolor/32x32/apps/com.netsysprep.stickynotes.png",
+        "build/icons/48x48.png=/usr/share/icons/hicolor/48x48/apps/com.netsysprep.stickynotes.png",
+        "build/icons/64x64.png=/usr/share/icons/hicolor/64x64/apps/com.netsysprep.stickynotes.png",
+        "build/icons/128x128.png=/usr/share/icons/hicolor/128x128/apps/com.netsysprep.stickynotes.png",
+        "build/icons/256x256.png=/usr/share/icons/hicolor/256x256/apps/com.netsysprep.stickynotes.png",
+        "build/icons/512x512.png=/usr/share/icons/hicolor/512x512/apps/com.netsysprep.stickynotes.png",
+        "build/icons/1024x1024.png=/usr/share/icons/hicolor/1024x1024/apps/com.netsysprep.stickynotes.png"
+      ],
+      "afterInstall": "build/after-install.sh",
+      "afterRemove": "build/after-remove.sh"
     }
   }
 }

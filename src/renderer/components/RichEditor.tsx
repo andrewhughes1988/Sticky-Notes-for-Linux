@@ -54,9 +54,9 @@ export const RichEditor: React.FC<RichEditorProps> = ({
   const isUndoingRef = useRef<boolean>(false);
   const historyDebounceTimerRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Helper to extract clean plain text without forcing synchronous style/layout reflows
+  // Helper to extract clean plain text preserving paragraph and list newlines
   const extractPlainText = (element: HTMLElement): string => {
-    return (element.textContent || '')
+    return (element.innerText || element.textContent || '')
       .replace(/\u200B/g, '')
       .replace(/\u00a0/g, ' ')
       .trim();

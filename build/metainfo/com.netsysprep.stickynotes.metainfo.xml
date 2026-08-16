@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>com.netsysprep.stickynotes</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <name>Sticky Notes</name>
+  <summary>Pixel-faithful Windows Sticky Notes app for Linux</summary>
+  <description>
+    <p>
+      A Sticky Notes app for Linux with local SQLite database and cloud sync readiness. Create colorful notes, pin them to your desktop, and search through all your notes from the Notes Manager.
+    </p>
+    <p>Features:</p>
+    <ul>
+      <li>Sticky notes with multiple color themes</li>
+      <li>Rich text formatting (bold, italic, underline, strikethrough)</li>
+      <li>Checklists and bulleted lists</li>
+      <li>Always-on-top pinning</li>
+      <li>Full-text search across all notes</li>
+      <li>Offline-first with local SQLite database</li>
+    </ul>
+  </description>
+  <developer id="com.netsysprep">
+    <name>Andrew Hughes</name>
+  </developer>
+  <url type="homepage">https://github.com/andrewhughes1988/Sticky-Notes-for-Linux</url>
+  <url type="bugtracker">https://github.com/andrewhughes1988/Sticky-Notes-for-Linux/issues</url>
+  <launchable type="desktop-id">sticky-notes-linux.desktop</launchable>
+  <provides>
+    <binary>sticky-notes-linux</binary>
+  </provides>
+  <icon type="stock">com.netsysprep.stickynotes</icon>
+  <content_rating type="oars-1.1" />
+  <releases>
+    <release version="1.0.0" date="2026-08-15">
+      <description>
+        <p>Initial release with core features:</p>
+        <ul>
+          <li>Create and manage sticky notes</li>
+          <li>Multiple color themes</li>
+          <li>Rich text formatting</li>
+          <li>Notes Manager with search</li>
+          <li>System tray integration</li>
+          <li>Autostart support</li>
+        </ul>
+      </description>
+    </release>
+  </releases>
+  <categories>
+    <category>Utility</category>
+    <category>TextEditor</category>
+    <category>Office</category>
+  </categories>
+  <keywords>
+    <keyword>sticky notes</keyword>
+    <keyword>notes</keyword>
+    <keyword>todos</keyword>
+    <keyword>reminders</keyword>
+  </keywords>
+</component>

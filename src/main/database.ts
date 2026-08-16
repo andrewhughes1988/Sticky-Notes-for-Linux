@@ -43,6 +43,67 @@ export class DatabaseService {
     }
 
     this.initSchema();
+    this.initStatements();
+  }
+
+  // Pre-compiled prepared statements for high-throughput operations
+  private stmtInsertNote!: Database.Statement;
+  private stmtGetNoteById!: Database.Statement;
+  private stmtGetOpenNotes!: Database.Statement;
+  private stmtUpdateNoteBounds!: Database.Statement;
+  private stmtSetNoteOpenState!: Database.Statement;
+  private stmtToggleNotePin!: Database.Statement;
+  private stmtSoftDeleteNote!: Database.Statement;
+  private stmtHardDeleteNote!: Database.Statement;
+  private stmtGetSetting!: Database.Statement;
+  private stmtGetAllSettings!: Database.Statement;
+  private stmtSetSetting!: Database.Statement;
+
+  private initStatements(): void {
+    this.stmtInsertNote = this.db.prepare(`
+      INSERT INTO notes (
+        id, title, content_html, content_plain, color, is_open, is_pinned,
+        pos_x, pos_y, width, height, z_order, created_at, updated_at,
+        deleted_at, remote_id, sync_status, change_key, last_synced_at
+      ) VALUES (
+        @id, @title, @content_html, @content_plain, @color, @is_open, @is_pinned,
+        @pos_x, @pos_y, @width, @height, @z_order, @created_at, @updated_at,
+        @deleted_at, @remote_id, @sync_status, @change_key, @last_synced_at
+      )
+    `);
+
+    this.stmtGetNoteById = this.db.prepare('SELECT * FROM notes WHERE id = ? AND deleted_at IS NULL');
+    this.stmtGetOpenNotes = this.db.prepare('SELECT * FROM notes WHERE is_open = 1 AND deleted_at IS NULL ORDER BY updated_at ASC');
+    this.stmtUpdateNoteBounds = this.db.prepare(`
+      UPDATE notes SET
+        pos_x = ?,
+        pos_y = ?,
+        width = ?,
+        height = ?,
+        updated_at = ?
+      WHERE id = ? AND deleted_at IS NULL
+    `);
+    this.stmtSetNoteOpenState = this.db.prepare(`
+      UPDATE notes SET
+        is_open = ?,
+        updated_at = ?
+      WHERE id = ? AND deleted_at IS NULL
+    `);
+    this.stmtToggleNotePin = this.db.prepare('UPDATE notes SET is_pinned = ?, updated_at = ? WHERE id = ?');
+    this.stmtSoftDeleteNote = this.db.prepare(`
+      UPDATE notes SET
+        deleted_at = ?,
+        is_open = 0,
+        sync_status = 'pending_delete'
+      WHERE id = ?
+    `);
+    this.stmtHardDeleteNote = this.db.prepare('DELETE FROM notes WHERE id = ?');
+    this.stmtGetSetting = this.db.prepare('SELECT value FROM settings WHERE key = ?');
+    this.stmtGetAllSettings = this.db.prepare('SELECT key, value FROM settings');
+    this.stmtSetSetting = this.db.prepare(`
+      INSERT INTO settings (key, value) VALUES (?, ?)
+      ON CONFLICT(key) DO UPDATE SET value = excluded.value
+    `);
   }
 
   private openDatabaseWithRecovery(): void {
@@ -187,31 +248,17 @@ export class DatabaseService {
       last_synced_at: initial.last_synced_at || null,
     };
 
-    const stmt = this.db.prepare(`
-      INSERT INTO notes (
-        id, title, content_html, content_plain, color, is_open, is_pinned,
-        pos_x, pos_y, width, height, z_order, created_at, updated_at,
-        deleted_at, remote_id, sync_status, change_key, last_synced_at
-      ) VALUES (
-        @id, @title, @content_html, @content_plain, @color, @is_open, @is_pinned,
-        @pos_x, @pos_y, @width, @height, @z_order, @created_at, @updated_at,
-        @deleted_at, @remote_id, @sync_status, @change_key, @last_synced_at
-      )
-    `);
-
-    stmt.run(note);
+    this.stmtInsertNote.run(note);
     return note;
   }
 
   public getNoteById(id: string): Note | null {
-    const stmt = this.db.prepare('SELECT * FROM notes WHERE id = ? AND deleted_at IS NULL');
-    const result = stmt.get(id) as Note | undefined;
+    const result = this.stmtGetNoteById.get(id) as Note | undefined;
     return result || null;
   }
 
   public getOpenNotes(): Note[] {
-    const stmt = this.db.prepare('SELECT * FROM notes WHERE is_open = 1 AND deleted_at IS NULL ORDER BY updated_at ASC');
-    return stmt.all() as Note[];
+    return this.stmtGetOpenNotes.all() as Note[];
   }
 
   public getAllNotes(options: { search?: string; includeClosed?: boolean; limit?: number; offset?: number } = {}): Note[] {
@@ -219,32 +266,41 @@ export class DatabaseService {
     const limitClause = limit && limit > 0 ? `LIMIT ${Math.max(1, Math.floor(limit))} OFFSET ${Math.max(0, Math.floor(offset))}` : '';
 
     if (search && search.trim().length > 0) {
-      const cleanQuery = search.trim().replace(/["*]/g, '');
+      const cleanTerms = search
+        .trim()
+        .replace(/["*]/g, '')
+        .split(/\s+/)
+        .filter((t) => t.length > 0);
+
       const openFilter = includeClosed ? '' : 'AND notes.is_open = 1';
       
-      try {
-        const query = `
-          SELECT notes.* FROM notes
-          JOIN notes_fts ON notes.rowid = notes_fts.rowid
-          WHERE notes.deleted_at IS NULL ${openFilter}
-            AND notes_fts MATCH ?
-          ORDER BY notes.updated_at DESC
-          ${limitClause}
-        `;
-        const stmt = this.db.prepare(query);
-        return stmt.all(`"${cleanQuery}"*`) as Note[];
-      } catch (err) {
-        // Safe fallback to LIKE if query has special syntax issues
-        const fallbackQuery = `
-          SELECT * FROM notes
-          WHERE deleted_at IS NULL ${openFilter}
-            AND (content_plain LIKE ? OR title LIKE ?)
-          ORDER BY updated_at DESC
-          ${limitClause}
-        `;
-        const stmt = this.db.prepare(fallbackQuery);
-        const term = `%${cleanQuery}%`;
-        return stmt.all(term, term) as Note[];
+      if (cleanTerms.length > 0) {
+        try {
+          const ftsMatch = cleanTerms.map((t) => `"${t}"*`).join(' ');
+          const query = `
+            SELECT notes.* FROM notes
+            JOIN notes_fts ON notes.rowid = notes_fts.rowid
+            WHERE notes.deleted_at IS NULL ${openFilter}
+              AND notes_fts MATCH ?
+            ORDER BY notes.updated_at DESC
+            ${limitClause}
+          `;
+          const stmt = this.db.prepare(query);
+          return stmt.all(ftsMatch) as Note[];
+        } catch (err) {
+          // Safe fallback to LIKE if query has special syntax issues
+          const likeConditions = cleanTerms.map(() => '(content_plain LIKE ? OR title LIKE ?)').join(' AND ');
+          const fallbackQuery = `
+            SELECT * FROM notes
+            WHERE deleted_at IS NULL ${openFilter}
+              AND (${likeConditions})
+            ORDER BY updated_at DESC
+            ${limitClause}
+          `;
+          const stmt = this.db.prepare(fallbackQuery);
+          const params = cleanTerms.flatMap((t) => [`%${t}%`, `%${t}%`]);
+          return stmt.all(...params) as Note[];
+        }
       }
     }
 
@@ -300,58 +356,33 @@ export class DatabaseService {
   }
 
   public updateNoteBounds(id: string, bounds: { x: number; y: number; width: number; height: number }): void {
-    const stmt = this.db.prepare(`
-      UPDATE notes SET
-        pos_x = ?,
-        pos_y = ?,
-        width = ?,
-        height = ?,
-        updated_at = ?
-      WHERE id = ? AND deleted_at IS NULL
-    `);
-    stmt.run(bounds.x, bounds.y, bounds.width, bounds.height, Date.now(), id);
+    this.stmtUpdateNoteBounds.run(bounds.x, bounds.y, bounds.width, bounds.height, Date.now(), id);
   }
 
   public setNoteOpenState(id: string, isOpen: boolean): void {
-    const stmt = this.db.prepare(`
-      UPDATE notes SET
-        is_open = ?,
-        updated_at = ?
-      WHERE id = ? AND deleted_at IS NULL
-    `);
-    stmt.run(isOpen ? 1 : 0, Date.now(), id);
+    this.stmtSetNoteOpenState.run(isOpen ? 1 : 0, Date.now(), id);
   }
 
   public toggleNotePin(id: string): boolean {
     const note = this.getNoteById(id);
     if (!note) return false;
     const newPin = note.is_pinned ? 0 : 1;
-    const stmt = this.db.prepare('UPDATE notes SET is_pinned = ?, updated_at = ? WHERE id = ?');
-    stmt.run(newPin, Date.now(), id);
+    this.stmtToggleNotePin.run(newPin, Date.now(), id);
     return newPin === 1;
   }
 
   public deleteNote(id: string, hardDelete: boolean = false): void {
     if (hardDelete) {
-      const stmt = this.db.prepare('DELETE FROM notes WHERE id = ?');
-      stmt.run(id);
+      this.stmtHardDeleteNote.run(id);
     } else {
-      const stmt = this.db.prepare(`
-        UPDATE notes SET
-          deleted_at = ?,
-          is_open = 0,
-          sync_status = 'pending_delete'
-        WHERE id = ?
-      `);
-      stmt.run(Date.now(), id);
+      this.stmtSoftDeleteNote.run(Date.now(), id);
     }
   }
 
   // --- Settings Store ---
 
   public getSetting<T>(key: keyof AppConfig): T {
-    const stmt = this.db.prepare('SELECT value FROM settings WHERE key = ?');
-    const row = stmt.get(key) as { value: string } | undefined;
+    const row = this.stmtGetSetting.get(key) as { value: string } | undefined;
     if (!row) {
       throw new Error(`Setting ${key} not found`);
     }
@@ -359,8 +390,7 @@ export class DatabaseService {
   }
 
   public getAllSettings(): AppConfig {
-    const stmt = this.db.prepare('SELECT key, value FROM settings');
-    const rows = stmt.all() as { key: string; value: string }[];
+    const rows = this.stmtGetAllSettings.all() as { key: string; value: string }[];
     const result: Partial<AppConfig> = {};
     for (const row of rows) {
       try {
@@ -373,11 +403,7 @@ export class DatabaseService {
   }
 
   public setSetting(key: keyof AppConfig, value: any): void {
-    const stmt = this.db.prepare(`
-      INSERT INTO settings (key, value) VALUES (?, ?)
-      ON CONFLICT(key) DO UPDATE SET value = excluded.value
-    `);
-    stmt.run(key, JSON.stringify(value));
+    this.stmtSetSetting.run(key, JSON.stringify(value));
   }
 
   public close(): void {

@@ -1,5 +1,6 @@
-import { BrowserWindow, shell, screen, app } from 'electron';
+import { BrowserWindow, shell, screen, app, nativeImage, NativeImage } from 'electron';
 import path from 'node:path';
+import fs from 'node:fs';
 import { DatabaseService } from './database';
 import { Note, NOTE_COLORS } from '../shared/types';
 
@@ -9,15 +10,26 @@ export class WindowManager {
   private db: DatabaseService;
   private preloadPath: string;
   private iconPath: string;
+  private iconImage: NativeImage | undefined;
+  private distPath: string;
   private isDev: boolean;
   private devServerUrl: string;
+  private isQuitting: boolean = false;
 
   constructor(db: DatabaseService) {
     this.db = db;
     this.isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
     this.devServerUrl = process.env.VITE_DEV_SERVER_URL || 'http://localhost:5173';
     this.preloadPath = path.join(__dirname, '../preload/preload.js');
-    this.iconPath = path.join(__dirname, '../../build/icon.png');
+    // In dev: build/icon.png relative to dist-electron/main. In packaged app: process.resourcesPath/build/icon.png
+    this.iconPath = app.isPackaged
+      ? path.join(process.resourcesPath, 'build', 'icon.png')
+      : path.join(__dirname, '../../build/icon.png');
+    if (fs.existsSync(this.iconPath)) {
+      this.iconImage = nativeImage.createFromPath(this.iconPath);
+    }
+    // In both dev and packaged (inside app.asar), dist/index.html is at ../../dist/index.html relative to dist-electron/main
+    this.distPath = path.join(__dirname, '../../dist');
   }
 
   /**
@@ -41,7 +53,14 @@ export class WindowManager {
       }
     } else {
       for (const note of openNotes) {
-        this.createNoteWindow(note);
+        const existing = this.noteWindows.get(note.id);
+        if (existing && !existing.isDestroyed()) {
+          if (existing.isMinimized()) existing.restore();
+          existing.show();
+          existing.focus();
+        } else {
+          this.createNoteWindow(note);
+        }
       }
     }
   }
@@ -141,7 +160,7 @@ export class WindowManager {
       y,
       frame: false, // Frameless for exact Windows Sticky Notes styling
       maximizable: false,
-      icon: this.iconPath,
+      icon: this.iconImage || this.iconPath,
       hasShadow: true,
       backgroundColor: themeDef.light.body,
       alwaysOnTop: note.is_pinned === 1,
@@ -157,6 +176,10 @@ export class WindowManager {
         additionalArguments: [`--note-id=${note.id}`, '--window-type=note'],
       },
     });
+
+    if (this.iconImage) {
+      try { win.setIcon(this.iconImage); } catch { /* ignore */ }
+    }
 
     this.noteWindows.set(note.id, win);
 
@@ -175,7 +198,7 @@ export class WindowManager {
     win.on('move', saveBounds);
     win.on('resize', saveBounds);
 
-    // When the window is closed via UI, flush final bounds and mark is_open = 0 in DB
+    // When the window is closed via UI, flush final bounds and mark is_open = 0 in DB (unless app is quitting or this is the last note window)
     win.on('close', () => {
       if (resizeTimeout) {
         clearTimeout(resizeTimeout);
@@ -188,9 +211,19 @@ export class WindowManager {
       } catch {
         // Ignore
       }
+
+      // If this is the last open note window and manager is closed, the user is closing the app.
+      // Preserve is_open = 1 so the active note restores on next application launch.
+      const isLastWindow = this.noteWindows.size <= 1 && (!this.managerWindow || this.managerWindow.isDestroyed());
+
       this.noteWindows.delete(note.id);
-      this.db.setNoteOpenState(note.id, false);
-      this.broadcast('notes:changed');
+
+      if (!this.isQuitting) {
+        if (!isLastWindow) {
+          this.db.setNoteOpenState(note.id, false);
+        }
+        this.broadcast('notes:changed');
+      }
     });
 
     // Intercept navigation & open external links in default browser safely
@@ -206,7 +239,7 @@ export class WindowManager {
     if (this.isDev && process.env.VITE_DEV_SERVER_URL) {
       win.loadURL(`${this.devServerUrl}?noteId=${note.id}&type=note`);
     } else {
-      win.loadFile(path.join(__dirname, '../../dist/index.html'), {
+      win.loadFile(path.join(this.distPath, 'index.html'), {
         query: { noteId: note.id, type: 'note' },
       });
     }
@@ -270,7 +303,7 @@ export class WindowManager {
       frame: false,
       maximizable: false,
       title: 'Sticky Notes',
-      icon: this.iconPath,
+      icon: this.iconImage || this.iconPath,
       backgroundColor: '#202020',
       webPreferences: {
         preload: this.preloadPath,
@@ -282,6 +315,10 @@ export class WindowManager {
         additionalArguments: ['--window-type=manager'],
       },
     });
+
+    if (this.iconImage) {
+      try { this.managerWindow.setIcon(this.iconImage); } catch { /* ignore */ }
+    }
 
     this.managerWindow.on('closed', () => {
       this.managerWindow = null;
@@ -298,7 +335,7 @@ export class WindowManager {
     if (this.isDev && process.env.VITE_DEV_SERVER_URL) {
       this.managerWindow.loadURL(`${this.devServerUrl}?type=manager`);
     } else {
-      this.managerWindow.loadFile(path.join(__dirname, '../../dist/index.html'), {
+      this.managerWindow.loadFile(path.join(this.distPath, 'index.html'), {
         query: { type: 'manager' },
       });
     }
@@ -327,6 +364,13 @@ export class WindowManager {
         win.hide();
       }
     }
+  }
+
+  /**
+   * Sets whether the entire application is in the process of shutting down
+   */
+  public setQuitting(quitting: boolean): void {
+    this.isQuitting = quitting;
   }
 
   /**

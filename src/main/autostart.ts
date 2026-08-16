@@ -39,7 +39,7 @@ function getAutostartExecPath(): string {
       return process.env.APPIMAGE || process.execPath;
     case 'flatpak':
       // Flatpak apps are typically launched via flatpak run
-      return `flatpak run ${process.env.FLATPAK_ID || 'com.stickynotes.linux'}`;
+      return `flatpak run ${process.env.FLATPAK_ID || 'com.netsysprep.stickynotes'}`;
     case 'snap':
       // Snap apps are launched via snap run
       const snapName = process.env.SNAP_NAME || 'sticky-notes';
@@ -84,7 +84,7 @@ NoDisplay=false
 X-GNOME-Autostart-enabled=true
 Name=Sticky Notes
 Comment=Windows-style Sticky Notes for Linux
-Icon=sticky-notes
+Icon=sticky-notes-linux
 Categories=Utility;TextEditor;
 StartupNotify=false
 Terminal=false
