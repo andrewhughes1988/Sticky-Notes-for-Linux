@@ -119,7 +119,7 @@ export const ManagerView: React.FC = () => {
   }, [noteToDelete]);
 
   const handleCloseManager = () => {
-    window.stickyNotesAPI.toggleManagerWindow();
+    window.stickyNotesAPI.closeManagerWindow();
   };
 
   return (

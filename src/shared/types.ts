@@ -312,6 +312,8 @@ export interface StickyNotesAPI {
   
   // Manager Operations
   toggleManagerWindow: () => Promise<void>;
+  showManagerWindow: () => Promise<void>;
+  closeManagerWindow: () => Promise<void>;
   
   // System Events
   onNoteUpdated: (callback: (note: Note) => void) => () => void;

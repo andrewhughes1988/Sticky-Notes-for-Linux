@@ -52,6 +52,12 @@ const api: StickyNotesAPI = {
   toggleManagerWindow: () => {
     return ipcRenderer.invoke('manager:toggle');
   },
+  showManagerWindow: () => {
+    return ipcRenderer.invoke('manager:show');
+  },
+  closeManagerWindow: () => {
+    return ipcRenderer.invoke('manager:close');
+  },
 
   onNoteUpdated: (callback: (note: Note) => void) => {
     const handler = (_event: any, note: Note) => callback(note);

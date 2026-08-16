@@ -38,7 +38,7 @@ export class WindowManager {
   public restoreOpenNotes(): void {
     const openNotes = this.db.getOpenNotes();
     if (openNotes.length === 0) {
-      // If no notes are open, open one initial welcome/new note
+      // If no notes are open, check if any notes exist in the database
       const allNotes = this.db.getAllNotes({ includeClosed: true });
       if (allNotes.length === 0) {
         this.createNewNoteWindow({
@@ -48,8 +48,13 @@ export class WindowManager {
           color: 'yellow',
         });
       } else {
-        // Just show the Notes Manager
-        this.showManagerWindow();
+        // Automatically restore the most recently active note on the desktop
+        const mostRecent = allNotes[0];
+        if (mostRecent) {
+          this.openNote(mostRecent.id);
+        } else {
+          this.showManagerWindow();
+        }
       }
     } else {
       for (const note of openNotes) {
@@ -212,9 +217,10 @@ export class WindowManager {
         // Ignore
       }
 
-      // If this is the last open note window and manager is closed, the user is closing the app.
+      // If this is the last open note window and manager is closed/not visible, the user is closing the app.
       // Preserve is_open = 1 so the active note restores on next application launch.
-      const isLastWindow = this.noteWindows.size <= 1 && (!this.managerWindow || this.managerWindow.isDestroyed());
+      const isManagerVisible = !!(this.managerWindow && !this.managerWindow.isDestroyed() && this.managerWindow.isVisible());
+      const isLastWindow = this.noteWindows.size <= 1 && !isManagerVisible;
 
       this.noteWindows.delete(note.id);
 
@@ -341,9 +347,16 @@ export class WindowManager {
     }
   }
 
+  public closeManagerWindow(): void {
+    if (this.managerWindow && !this.managerWindow.isDestroyed()) {
+      this.managerWindow.close();
+      this.managerWindow = null;
+    }
+  }
+
   public toggleManagerWindow(): void {
     if (this.managerWindow && !this.managerWindow.isDestroyed() && this.managerWindow.isVisible()) {
-      this.managerWindow.hide();
+      this.closeManagerWindow();
     } else {
       this.showManagerWindow();
     }

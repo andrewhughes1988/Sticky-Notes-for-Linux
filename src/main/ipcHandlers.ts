@@ -55,6 +55,12 @@ export function registerIpcHandlers(
   ipcMain.handle('manager:toggle', async () => {
     windowManager.toggleManagerWindow();
   });
+  ipcMain.handle('manager:show', async () => {
+    windowManager.showManagerWindow();
+  });
+  ipcMain.handle('manager:close', async () => {
+    windowManager.closeManagerWindow();
+  });
 
   // Settings
   ipcMain.handle('settings:getAll', async () => {

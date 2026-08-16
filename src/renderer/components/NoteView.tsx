@@ -133,7 +133,7 @@ export const NoteView: React.FC<NoteViewProps> = ({ noteId }) => {
         <ColorPicker
           currentColor={note.color}
           onSelectColor={handleColorChange}
-          onOpenManager={() => window.stickyNotesAPI.toggleManagerWindow()}
+          onOpenManager={() => window.stickyNotesAPI.showManagerWindow()}
           onDeleteNote={() => setIsDeleteModalOpen(true)}
           onClose={() => setIsMenuOpen(false)}
         />
