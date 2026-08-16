@@ -30,20 +30,36 @@ A lightweight, beautiful, and distraction-free Sticky Notes app for Linux, inspi
 
 ---
 
-## 📦 Installation & Packaging
+## 📦 Download & Installation
 
-### Run from Source
+### Download Pre-built Packages
+Download the latest `.deb` or `.AppImage` release from the **[GitHub Releases](https://github.com/andrewhughes1988/Sticky-Notes-for-Linux/releases)** page:
+
+- **Debian / Ubuntu / Mint / Parrot OS (`.deb`):**
+  ```bash
+  sudo dpkg -i sticky-notes-linux_1.0.0_amd64.deb
+  ```
+
+- **Universal Linux (`.AppImage`):**
+  ```bash
+  chmod +x "Sticky Notes-1.0.0.AppImage"
+  ./"Sticky Notes-1.0.0.AppImage"
+  ```
+
+---
+
+### Build from Source
 ```bash
 npm install
 npm run build
 npm start
 ```
 
-### Build Debian Package (`.deb`) and AppImage
+### Build Distribution Packages
 ```bash
 npm run dist
 ```
-The built packages will be in the `release/` directory:
+The built packages will be placed in the `release/` directory:
 - `sticky-notes-linux_1.0.0_amd64.deb`
 - `Sticky Notes-1.0.0.AppImage`
 
