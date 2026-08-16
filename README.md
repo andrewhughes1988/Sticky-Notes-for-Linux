@@ -1,64 +1,55 @@
 # Sticky Notes for Linux
 
-A pixel-faithful, offline-first Windows Sticky Notes application for Linux (optimized for KDE Plasma, Wayland, and Parrot Security OS).
-
-![Sticky Notes Header](https://img.shields.io/badge/Platform-Linux%20%28Wayland%20%2F%20X11%29-blue)
-![Security-Hardened](https://img.shields.io/badge/Security-Air--Gapped%20%2F%20Local--Only-brightgreen)
-![License](https://img.shields.io/badge/License-MIT-green)
+A lightweight, beautiful, and distraction-free Sticky Notes app for Linux, inspired by Windows Sticky Notes.
 
 ---
 
 ## ✨ Features
 
-- 🎨 **Faithful Windows Fluent Design:** 7 canonical color themes (Yellow, Green, Pink, Purple, Blue, Charcoal, White/Grey) in both light and dark modes.
-- 🪟 **True Multi-Window Orchestration:** Independent floating note windows on your desktop. Drag by top header, resize freely, or keep always on top.
-- 📋 **Central Notes Manager:** Windows-style Notes List window with instant full-text search (SQLite FTS5), card grid, open/closed status indicators, and permanent delete confirmation.
-- ✍️ **Rich Text Editing:** Full support for Bold (`Ctrl+B`), Italic (`Ctrl+I`), Underline (`Ctrl+U`), Strikethrough (`Ctrl+T`), Bullet lists (`Ctrl+Shift+L`), and interactive Checklists/To-do items.
-- 💾 **Local-Only & Air-Gapped:** Zero listening network ports, strict CSP (`connect-src 'none'`), DOMPurify XSS protection, and POSIX `0600` database file permissions.
-- 🚀 **Smart Autostart & State Restoration:** Restores only notes that were previously in an open state on desktop login via XDG Autostart (`~/.config/autostart/`).
-- 📌 **KDE Plasma System Tray Integration:** Tray icon to quickly create notes, toggle Notes Manager, show/hide all notes, or exit.
-- 🔄 **Cloud-Ready Sync Architecture:** Built with an adapter pattern ready for Phase 2 Microsoft 365 / OneNote / Exchange Online sync.
+- **Classic Sticky Notes Look & Feel** — Choose from 7 color themes: Yellow, Green, Pink, Purple, Blue, Charcoal (Dark), and White.
+- **Rich Text Formatting** — Format your thoughts with **Bold**, *Italic*, <u>Underline</u>, and ~~Strikethrough~~.
+- **Interactive Checklists & Bullet Lists** — Track to-do items and bullet points with clean keyboard and click interactions.
+- **Pin Always-on-Top** — Keep important notes pinned above all your other windows while you work.
+- **Notes List & Instant Search** — Easily search and browse all your open and closed notes from the central Notes List.
+- **Automatic State Restoration** — Your open desktop notes and their exact positions are remembered and restored when you reopen the app.
+- **System Tray Integration** — Access your notes, create new notes, or show/hide all notes directly from your desktop system tray.
+- **Private & 100% Offline** — All your notes stay private on your computer with zero cloud telemetry or internet tracking.
 
 ---
 
-## 🏗️ Architecture & Security Documents
+## ⌨️ Keyboard Shortcuts
 
-- 📘 [ARCHITECTURE.md](./ARCHITECTURE.md) - Complete software architecture, component layers, database schema, and Microsoft Graph sync feasibility.
-- 🛡️ [SECURITY_REVIEW.md](./SECURITY_REVIEW.md) - Threat model, supply chain assessment, POSIX permissions, and local isolation guarantees.
+| Shortcut | Action |
+| :--- | :--- |
+| `Ctrl + N` | Create a new note |
+| `Ctrl + B` | Bold selected text |
+| `Ctrl + I` | Italic selected text |
+| `Ctrl + U` | Underline selected text |
+| `Ctrl + T` | Strikethrough selected text |
+| `Ctrl + Z` | Undo typing |
+| `Ctrl + Y` | Redo typing |
 
 ---
 
-## 🚀 Quick Start
+## 📦 Installation & Packaging
 
-### 1. Install Dependencies
+### Run from Source
 ```bash
 npm install
-```
-
-### 2. Run in Development Mode
-```bash
-npm run dev
-```
-
-### 3. Launch App
-```bash
+npm run build
 npm start
 ```
 
-### 4. Run Automated Database & FTS5 Tests
-```bash
-npm test
-```
-
-### 5. Build Production Linux Package
+### Build Debian Package (`.deb`) and AppImage
 ```bash
 npm run dist
 ```
+The built packages will be in the `release/` directory:
+- `sticky-notes-linux_1.0.0_amd64.deb`
+- `Sticky Notes-1.0.0.AppImage`
 
 ---
 
-## 🗄️ Database Location
+## 📄 License
 
-Data is stored locally under the XDG standard:
-* **SQLite Database:** `~/.local/share/sticky-notes/stickynotes.db` (POSIX `0600`)
-* **Autostart Entry:** `~/.config/autostart/sticky-notes.desktop`
+MIT License.
