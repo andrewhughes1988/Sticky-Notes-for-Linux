@@ -939,19 +939,63 @@ export const RichEditor: React.FC<RichEditorProps> = ({
     }
   };
 
+  const getSelectedChecklistItems = (): HTMLElement[] => {
+    const root = editorRef.current;
+    const selection = window.getSelection();
+    if (!root || !selection || selection.isCollapsed || selection.rangeCount === 0) return [];
+
+    const range = selection.getRangeAt(0);
+    if (!root.contains(range.startContainer) || !root.contains(range.endContainer)) return [];
+
+    const start = range.cloneRange();
+    const end = range.cloneRange();
+    start.collapse(true);
+    end.collapse(false);
+
+    return Array.from(root.querySelectorAll<HTMLElement>('.checklist-item')).filter((item) => {
+      const text = item.querySelector('.checklist-text') || item.querySelector('span');
+      if (!text) return false;
+      const itemRange = document.createRange();
+      itemRange.selectNodeContents(text);
+      const walker = document.createTreeWalker(text, NodeFilter.SHOW_TEXT);
+      const firstText = walker.nextNode();
+      if (firstText) {
+        let lastText = firstText;
+        let nextText: Node | null;
+        while ((nextText = walker.nextNode())) lastText = nextText;
+        itemRange.setStart(firstText, 0);
+        itemRange.setEnd(lastText, lastText.textContent?.length || 0);
+      }
+      return itemRange.compareBoundaryPoints(Range.START_TO_START, end) < 0 &&
+        itemRange.compareBoundaryPoints(Range.END_TO_END, start) > 0;
+    });
+  };
+
+  const handleMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
+    const target = e.target as HTMLElement;
+    if (!target.classList.contains('checklist-checkbox')) return;
+    const item = target.closest<HTMLElement>('.checklist-item');
+    if (item && getSelectedChecklistItems().includes(item)) e.preventDefault();
+  };
+
   // Delegate click for checklist checkboxes
   const handleClick = (e: React.MouseEvent<HTMLDivElement>) => {
     const target = e.target as HTMLElement;
     if (target && target.classList.contains('checklist-checkbox')) {
       const checkbox = target as HTMLInputElement;
-      const parent = checkbox.closest('.checklist-item');
+      const parent = checkbox.closest<HTMLElement>('.checklist-item');
       if (parent) {
-        if (checkbox.checked) {
-          parent.classList.add('checked');
-          checkbox.setAttribute('checked', 'checked');
-        } else {
-          parent.classList.remove('checked');
-          checkbox.removeAttribute('checked');
+        const selectedItems = getSelectedChecklistItems();
+        const items = selectedItems.includes(parent) ? selectedItems : [parent];
+        const checked = checkbox.checked;
+        pushHistory();
+        for (const item of items) {
+          const input = item.querySelector<HTMLInputElement>('.checklist-checkbox');
+          if (!input) continue;
+          input.checked = checked;
+          item.classList.toggle('checked', checked);
+          if (checked) input.setAttribute('checked', 'checked');
+          else input.removeAttribute('checked');
         }
         handleContentChange();
       }
@@ -1173,6 +1217,7 @@ export const RichEditor: React.FC<RichEditorProps> = ({
         onPaste={handlePaste}
         onInput={handleInput}
         onKeyUp={handleSelectionReset}
+        onMouseDown={handleMouseDown}
         onMouseUp={handleSelectionReset}
         onKeyDown={handleKeyDown}
         onClick={handleClick}
