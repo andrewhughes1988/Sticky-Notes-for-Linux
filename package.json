@@ -10,7 +10,7 @@
     "lint": "eslint .",
     "format:check": "prettier --check \"src/**/*.{ts,tsx,css}\" \"tests/**/*.ts\"",
     "build": "npm run typecheck && vite build",
-    "start": "npm run build && electron .",
+    "start": "npm run build && electron --ozone-platform=x11 --class=com.netsysprep.stickynotes .",
     "rebuild": "electron-builder install-app-deps",
     "postinstall": "patch-package --error-on-fail && electron-builder install-app-deps",
     "test": "ELECTRON_RUN_AS_NODE=1 electron --import tsx --test tests/*.test.ts",
@@ -113,6 +113,10 @@
       "category": "Utility",
       "icon": "build/icons",
       "executableName": "sticky-notes-linux",
+      "executableArgs": [
+        "--ozone-platform=x11",
+        "--class=com.netsysprep.stickynotes"
+      ],
       "desktop": {
         "entry": {
           "Icon": "com.netsysprep.stickynotes",
@@ -124,7 +128,10 @@
     },
     "appImage": {
       "artifactName": "Sticky.Notes-${version}.${ext}",
-      "executableArgs": []
+      "executableArgs": [
+        "--ozone-platform=x11",
+        "--class=com.netsysprep.stickynotes"
+      ]
     },
     "deb": {
       "packageName": "sticky-notes-linux",

@@ -15,7 +15,10 @@ function createTempEnv() {
 }
 
 async function launchApp(envDirs: ReturnType<typeof createTempEnv>): Promise<ElectronApplication> {
-  const args = process.env.CI ? ['--no-sandbox', '.'] : ['.'];
+  const args: string[] = [];
+  if (process.env.CI) args.push('--no-sandbox');
+  if (process.env.DISPLAY) args.push('--ozone-platform=x11');
+  args.push('--class=com.netsysprep.stickynotes', '.');
   return electron.launch({
     args,
     cwd: process.cwd(),

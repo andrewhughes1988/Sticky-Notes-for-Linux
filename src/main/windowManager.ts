@@ -18,7 +18,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import { DatabaseService, WindowBounds } from './database';
 import { parseSafeExternalUrl } from './htmlSanitizer';
-import { resolveLinuxOzoneSwitches } from './linuxPlatform';
+import { isRunningOnNativeWayland } from './linuxPlatform';
 import { logger } from './logger';
 import { Note, NOTE_COLORS, ExportResult } from '../shared/types';
 
@@ -106,8 +106,7 @@ export class WindowManager {
   constructor(db: DatabaseService) {
     this.db = db;
     this.isNativeWayland =
-      process.platform === 'linux' &&
-      resolveLinuxOzoneSwitches(process.env, process.argv).isNativeWayland;
+      process.platform === 'linux' && isRunningOnNativeWayland(process.env, process.argv);
     this.preloadPath = path.join(__dirname, '../preload/preload.js');
     this.iconPath = app.isPackaged
       ? path.join(process.resourcesPath, 'build', 'icon.png')

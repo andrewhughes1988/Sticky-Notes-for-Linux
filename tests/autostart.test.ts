@@ -8,6 +8,7 @@ import { AutostartManager } from '../src/main/autostart';
 test('Linux autostart writes separate, escaped desktop entry arguments', (context) => {
   const config = fs.mkdtempSync(path.join(os.tmpdir(), 'sticky-notes-autostart-'));
   const env = {
+    DISPLAY: process.env.DISPLAY,
     XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME,
     APPIMAGE: process.env.APPIMAGE,
     FLATPAK_ID: process.env.FLATPAK_ID,
@@ -22,6 +23,7 @@ test('Linux autostart writes separate, escaped desktop entry arguments', (contex
     fs.rmSync(config, { recursive: true, force: true });
   });
 
+  process.env.DISPLAY = ':0';
   process.env.XDG_CONFIG_HOME = config;
   process.env.APPIMAGE = '/tmp/Sticky Notes "Dollar$" Back\\slash 100%.AppImage';
   const manager = new AutostartManager();
@@ -34,19 +36,26 @@ test('Linux autostart writes separate, escaped desktop entry arguments', (contex
   assert.equal(manager.isEnabled(), true);
   assert.equal(
     readExec(),
-    String.raw`Exec=/usr/bin/env -- "/tmp/Sticky Notes \\"Dollar\\$\\" Back\\\\slash 100%%.AppImage" --autostart`,
+    String.raw`Exec=/usr/bin/env -- "/tmp/Sticky Notes \\"Dollar\\$\\" Back\\\\slash 100%%.AppImage" "--ozone-platform=x11" "--class=com.netsysprep.stickynotes" --autostart`,
   );
 
+  delete process.env.DISPLAY;
   delete process.env.APPIMAGE;
   process.env.FLATPAK_ID = 'com.netsysprep.stickynotes';
   manager.setEnabled(true);
-  assert.equal(readExec(), 'Exec=flatpak run com.netsysprep.stickynotes --autostart');
+  assert.equal(
+    readExec(),
+    'Exec=flatpak run com.netsysprep.stickynotes "--class=com.netsysprep.stickynotes" --autostart',
+  );
   delete process.env.FLATPAK_ID;
 
   process.env.SNAP_NAME = 'sticky-notes';
   process.env.SNAP_INSTANCE_NAME = 'sticky-notes_work';
   manager.setEnabled(true);
-  assert.equal(readExec(), 'Exec=snap run sticky-notes_work --autostart');
+  assert.equal(
+    readExec(),
+    'Exec=snap run sticky-notes_work "--class=com.netsysprep.stickynotes" --autostart',
+  );
 
   manager.setEnabled(false);
   manager.setEnabled(false);

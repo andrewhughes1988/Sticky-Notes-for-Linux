@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import { buildLinuxLaunchArgs } from './linuxPlatform';
 
 function getAutostartCommand(): string[] {
   if (process.env.APPIMAGE) return [process.env.APPIMAGE];
@@ -73,7 +74,8 @@ export class AutostartManager {
     }
     // GLib checks the executable path before expanding escaped percent characters.
     const argv = command[0].includes('%') ? ['/usr/bin/env', '--', ...command] : command;
-    const exec = [...argv, '--autostart'].map(escapeExecArgument).join(' ');
+    const launchArgs = buildLinuxLaunchArgs(process.env);
+    const exec = [...argv, ...launchArgs, '--autostart'].map(escapeExecArgument).join(' ');
     const desktopEntry = `[Desktop Entry]
 Type=Application
 Exec=${exec}

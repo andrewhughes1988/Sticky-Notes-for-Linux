@@ -1,55 +1,42 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
+  buildLinuxLaunchArgs,
   DESKTOP_FILE_NAME,
-  resolveLinuxOzoneSwitches,
+  isRunningOnNativeWayland,
   WINDOW_WM_CLASS,
 } from '../src/main/linuxPlatform';
 
-test('resolveLinuxOzoneSwitches prefers x11/XWayland when DISPLAY is set for alwaysOnTop and bounds', () => {
-  const kdeWaylandWithXWayland = resolveLinuxOzoneSwitches(
-    { WAYLAND_DISPLAY: 'wayland-0', DISPLAY: ':0' },
-    ['electron', '.']
+test('isRunningOnNativeWayland distinguishes CLI x11 vs native Wayland accurately', () => {
+  assert.equal(
+    isRunningOnNativeWayland({ WAYLAND_DISPLAY: 'wayland-0', DISPLAY: ':0' }, [
+      'sticky-notes-linux',
+      '--ozone-platform=x11',
+    ]),
+    false
   );
-  assert.deepEqual(kdeWaylandWithXWayland, {
-    switches: [['ozone-platform', 'x11']],
-    isNativeWayland: false,
-  });
+  assert.equal(
+    isRunningOnNativeWayland({ WAYLAND_DISPLAY: 'wayland-0', DISPLAY: ':0' }, [
+      'sticky-notes-linux',
+      '--ozone-platform=wayland',
+    ]),
+    true
+  );
+  assert.equal(
+    isRunningOnNativeWayland({ WAYLAND_DISPLAY: 'wayland-0' }, ['sticky-notes-linux']),
+    true
+  );
+  assert.equal(isRunningOnNativeWayland({ DISPLAY: ':0' }, ['sticky-notes-linux']), false);
 });
 
-test('resolveLinuxOzoneSwitches falls back to native Wayland when DISPLAY is absent', () => {
-  const pureWayland = resolveLinuxOzoneSwitches(
-    { WAYLAND_DISPLAY: 'wayland-0' },
-    ['electron', '.']
-  );
-  assert.deepEqual(pureWayland, {
-    switches: [
-      ['ozone-platform-hint', 'auto'],
-      ['enable-features', 'WaylandWindowDecorations'],
-    ],
-    isNativeWayland: true,
-  });
-});
-
-test('resolveLinuxOzoneSwitches respects explicit user --ozone-platform CLI flags', () => {
-  const explicitWayland = resolveLinuxOzoneSwitches(
-    { WAYLAND_DISPLAY: 'wayland-0', DISPLAY: ':0' },
-    ['electron', '--ozone-platform=wayland', '.']
-  );
-  assert.deepEqual(explicitWayland, {
-    switches: [],
-    isNativeWayland: true,
-  });
-
-  const explicitHint = resolveLinuxOzoneSwitches(
-    { WAYLAND_DISPLAY: 'wayland-0', DISPLAY: ':0' },
-    ['electron', '--ozone-platform-hint=auto', '.']
-  );
-  assert.deepEqual(explicitHint, {
-    switches: [],
-    isNativeWayland: false,
-  });
-
+test('buildLinuxLaunchArgs supplies --ozone-platform=x11 when DISPLAY is set and always sets --class', () => {
+  assert.deepEqual(buildLinuxLaunchArgs({ DISPLAY: ':0', WAYLAND_DISPLAY: 'wayland-0' }), [
+    '--ozone-platform=x11',
+    '--class=com.netsysprep.stickynotes',
+  ]);
+  assert.deepEqual(buildLinuxLaunchArgs({ WAYLAND_DISPLAY: 'wayland-0' }), [
+    '--class=com.netsysprep.stickynotes',
+  ]);
   assert.equal(DESKTOP_FILE_NAME, 'sticky-notes-linux.desktop');
   assert.equal(WINDOW_WM_CLASS, 'com.netsysprep.stickynotes');
 });

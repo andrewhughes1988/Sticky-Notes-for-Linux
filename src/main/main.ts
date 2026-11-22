@@ -6,24 +6,15 @@ import { AutostartManager } from './autostart';
 import { registerIpcHandlers } from './ipcHandlers';
 import { parseSafeExternalUrl } from './htmlSanitizer';
 import { AesGcmNoteCipher, createElectronKeyringAdapter } from './crypto';
-import {
-  DESKTOP_FILE_NAME,
-  resolveLinuxOzoneSwitches,
-  WINDOW_WM_CLASS,
-} from './linuxPlatform';
+import { DESKTOP_FILE_NAME, WINDOW_WM_CLASS } from './linuxPlatform';
 import { logger } from './logger';
 
-// Configure Linux Ozone backend & desktop identity before Electron initializes
-if (process.platform === 'linux') {
-  const ozone = resolveLinuxOzoneSwitches(process.env, process.argv);
-  for (const [flag, value] of ozone.switches) {
-    app.commandLine.appendSwitch(flag, value);
-  }
-  // Ensure X11 WM_CLASS and Wayland xdg_toplevel.app_id match StartupWMClass & .desktop entry
-  app.commandLine.appendSwitch('class', WINDOW_WM_CLASS);
-  if (typeof app.setDesktopName === 'function') {
-    app.setDesktopName(DESKTOP_FILE_NAME);
-  }
+// NOTE: Do NOT call app.commandLine.appendSwitch('ozone-platform', ...) here.
+// In Electron 38+, the Browser process initializes Ozone before main.js executes;
+// mutating ozone-platform from JS creates a Browser/GPU backend mismatch.
+// X11/XWayland and --class flags are supplied via .desktop executableArgs & autostart.ts.
+if (process.platform === 'linux' && typeof app.setDesktopName === 'function') {
+  app.setDesktopName(DESKTOP_FILE_NAME);
 }
 app.commandLine.appendSwitch('log-level', '3'); // Suppress benign Chromium internal VSync notices
 
