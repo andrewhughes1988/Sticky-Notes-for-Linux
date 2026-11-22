@@ -1,6 +1,6 @@
 {
   "name": "com.netsysprep.stickynotes",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Pixel-faithful Windows Sticky Notes app for Linux with local database and cloud sync readiness",
   "main": "dist-electron/main/main.js",
   "scripts": {

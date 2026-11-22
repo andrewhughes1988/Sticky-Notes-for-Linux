@@ -31,6 +31,11 @@
   <icon type="stock">com.netsysprep.stickynotes</icon>
   <content_rating type="oars-1.1" />
   <releases>
+    <release version="1.1.0" date="2026-11-21">
+      <description>
+        <p>Security and performance improvements, plus support for checking or unchecking multiple selected checklist items at once.</p>
+      </description>
+    </release>
     <release version="1.0.0" date="2026-08-15">
       <description>
         <p>Initial release with core features:</p>

@@ -37,13 +37,13 @@ Download the latest `.deb` or `.AppImage` release from the **[GitHub Releases](h
 
 - **Debian / Ubuntu / Mint / Parrot OS (`.deb`):**
   ```bash
-  sudo dpkg -i sticky-notes-linux_1.0.0_amd64.deb
+  sudo dpkg -i sticky-notes-linux_1.1.0_amd64.deb
   ```
 
 - **Universal Linux (`.AppImage`):**
   ```bash
-  chmod +x "Sticky Notes-1.0.0.AppImage"
-  ./"Sticky Notes-1.0.0.AppImage"
+  chmod +x "Sticky Notes-1.1.0.AppImage"
+  ./"Sticky Notes-1.1.0.AppImage"
   ```
 
 ---
@@ -60,8 +60,8 @@ npm start
 npm run dist
 ```
 The built packages will be placed in the `release/` directory:
-- `sticky-notes-linux_1.0.0_amd64.deb`
-- `Sticky Notes-1.0.0.AppImage`
+- `sticky-notes-linux_1.1.0_amd64.deb`
+- `Sticky Notes-1.1.0.AppImage`
 
 ## Local data and recovery
 
