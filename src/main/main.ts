@@ -1,19 +1,60 @@
-import { app, dialog } from 'electron';
+import { app, dialog, safeStorage, session, shell } from 'electron';
 import { DatabaseService } from './database';
 import { WindowManager } from './windowManager';
 import { TrayService } from './tray';
 import { AutostartManager } from './autostart';
 import { registerIpcHandlers } from './ipcHandlers';
+import { parseSafeExternalUrl } from './htmlSanitizer';
+import { AesGcmNoteCipher, createElectronKeyringAdapter } from './crypto';
+import {
+  DESKTOP_FILE_NAME,
+  resolveLinuxOzoneSwitches,
+  WINDOW_WM_CLASS,
+} from './linuxPlatform';
+import { logger } from './logger';
 
-// Configure Ozone / Wayland hardware acceleration flags for Linux
-app.commandLine.appendSwitch('ozone-platform-hint', 'auto');
-app.commandLine.appendSwitch('enable-features', 'WaylandWindowDecorations');
+// Configure Linux Ozone backend & desktop identity before Electron initializes
+if (process.platform === 'linux') {
+  const ozone = resolveLinuxOzoneSwitches(process.env, process.argv);
+  for (const [flag, value] of ozone.switches) {
+    app.commandLine.appendSwitch(flag, value);
+  }
+  // Ensure X11 WM_CLASS and Wayland xdg_toplevel.app_id match StartupWMClass & .desktop entry
+  app.commandLine.appendSwitch('class', WINDOW_WM_CLASS);
+  if (typeof app.setDesktopName === 'function') {
+    app.setDesktopName(DESKTOP_FILE_NAME);
+  }
+}
 app.commandLine.appendSwitch('log-level', '3'); // Suppress benign Chromium internal VSync notices
 
 app.setName('Sticky Notes');
 if (process.platform === 'win32' || process.platform === 'linux') {
-  app.setAppUserModelId('com.netsysprep.stickynotes');
+  app.setAppUserModelId(WINDOW_WM_CLASS);
 }
+
+// Global fatal error & unhandled rejection logging
+process.on('uncaughtException', (error) => {
+  logger.error('Uncaught exception in main process', error);
+});
+process.on('unhandledRejection', (reason) => {
+  logger.error('Unhandled promise rejection in main process', reason);
+});
+
+// Global webContents security hardening across every window/frame
+app.on('web-contents-created', (_event, contents) => {
+  contents.on('will-navigate', (e) => e.preventDefault());
+  contents.on('will-redirect', (e) => e.preventDefault());
+  contents.on('will-attach-webview', (e) => e.preventDefault());
+  contents.setWindowOpenHandler(({ url }) => {
+    const safeUrl = parseSafeExternalUrl(url);
+    if (safeUrl) {
+      void shell.openExternal(safeUrl).catch((error) => {
+        logger.error('Failed to open external URL', error);
+      });
+    }
+    return { action: 'deny' };
+  });
+});
 
 // Ensure single instance
 const gotTheLock = app.requestSingleInstanceLock();
@@ -31,50 +72,72 @@ if (!gotTheLock) {
     }
   });
 
-  app.whenReady().then(() => {
-    // 1. Initialize core services
-    db = new DatabaseService();
-    autostartManager = new AutostartManager();
-    windowManager = new WindowManager(db);
-    trayService = new TrayService(windowManager);
+  app
+    .whenReady()
+    .then(() => {
+      // 0. Deny all browser permission requests globally (offline sticky notes app needs none)
+      session.defaultSession.setPermissionRequestHandler((_wc, _permission, callback) => {
+        callback(false);
+      });
+      session.defaultSession.setPermissionCheckHandler(() => false);
 
-    // 2. Register typed IPC handlers
-    registerIpcHandlers(db, windowManager, autostartManager);
-
-    // 3. Initialize system tray
-    trayService.init();
-
-    // 4. Check autostart status
-    try {
-      const config = db.getAllSettings();
-      if (config.autostart) {
-        autostartManager.setEnabled(true);
+      // 1. Initialize core services
+      db = new DatabaseService();
+      const keyring = createElectronKeyringAdapter(safeStorage);
+      if (db.isEncryptionEnabled()) {
+        const wrapped = db.getWrappedEncryptionKey();
+        if (!wrapped || !keyring.isAvailable()) {
+          throw new Error(
+            'Notes encryption is enabled, but the OS keyring is unavailable. Unlock your desktop keyring (e.g., KWallet or GNOME Keyring) and relaunch.'
+          );
+        }
+        const keyHex = keyring.unseal(wrapped);
+        db.unlockWithCipher(new AesGcmNoteCipher(Buffer.from(keyHex, 'hex')));
       }
-    } catch (error) {
-      console.error('Failed to apply the autostart setting:', error);
-    }
+      autostartManager = new AutostartManager();
+      windowManager = new WindowManager(db);
+      trayService = new TrayService(windowManager);
 
-    // 5. Restore previously open notes
-    const isAutostart = process.argv.includes('--autostart');
-    if (isAutostart) {
-      // On autostart, restore open notes quietly
-      const openNotes = db.getOpenNotes();
-      for (const note of openNotes) {
-        windowManager.openNote(note.id);
+      // 2. Register typed IPC handlers
+      registerIpcHandlers(db, windowManager, autostartManager, keyring);
+
+      // 3. Initialize system tray
+      trayService.init();
+
+      // 4. Check autostart status
+      try {
+        const config = db.getAllSettings();
+        if (config.autostart) {
+          autostartManager.setEnabled(true);
+        }
+      } catch (error) {
+        logger.error('Failed to apply the autostart setting', error);
       }
-    } else {
-      windowManager.restoreOpenNotes();
-    }
-  }).catch((error) => {
-    console.error('Could not start Sticky Notes:', error);
-    dialog.showErrorBox('Sticky Notes could not start',
-      'Check that your notes database and its directory are accessible. Keep the database and any companion files together if you need to recover them.');
-    app.quit();
-  });
 
-  // When all windows are closed, exit cleanly so note state and bounds are preserved for next launch
+      // 5. Restore previously open notes
+      const isAutostart = process.argv.includes('--autostart');
+      if (isAutostart) {
+        // On autostart, restore open notes quietly (stay in tray if none were open)
+        const openNotes = db.getOpenNotes();
+        for (const note of openNotes) {
+          windowManager.openNote(note.id);
+        }
+      } else {
+        windowManager.restoreOpenNotes();
+      }
+    })
+    .catch((error) => {
+      logger.error('Could not start Sticky Notes', error);
+      dialog.showErrorBox(
+        'Sticky Notes could not start',
+        'Check that your notes database and its directory are accessible. Keep the database and any companion files together if you need to recover them.'
+      );
+      app.quit();
+    });
+
+  // Stay resident in the system tray when all windows are closed (Decision D1).
   app.on('window-all-closed', () => {
-    app.quit();
+    // Intentionally keep running in the system tray; quit via Tray -> Quit, Ctrl+Q, or OS signals.
   });
 
   let shutdownPending = false;
@@ -82,26 +145,34 @@ if (!gotTheLock) {
 
   process.on('SIGTERM', () => app.quit());
   process.on('SIGINT', () => app.quit());
+  process.on('SIGHUP', () => app.quit());
 
   app.on('before-quit', (event) => {
     if (!windowManager || editorsSaved) return;
     event.preventDefault();
     if (shutdownPending) return;
     shutdownPending = true;
-    void windowManager.flushAllEditors().then(() => {
-      windowManager.flushAllOpenNoteBounds();
-      windowManager.setQuitting(true);
-      editorsSaved = true;
-      app.quit();
-    }).catch((error) => {
-      shutdownPending = false;
-      windowManager.resumeEditors();
-      console.error('Could not save all notes before quitting', error);
-      dialog.showErrorBox('Sticky Notes could not quit', 'Check your open notes for save errors, then try quitting again.');
-    });
+    void windowManager
+      .flushAllEditors()
+      .then(() => {
+        windowManager.flushAllOpenNoteBounds();
+        windowManager.setQuitting(true);
+        editorsSaved = true;
+        app.quit();
+      })
+      .catch((error) => {
+        shutdownPending = false;
+        windowManager.resumeEditors();
+        logger.error('Could not save all notes before quitting', error);
+        dialog.showErrorBox(
+          'Sticky Notes could not quit',
+          'Check your open notes for save errors, then try quitting again.'
+        );
+      });
   });
 
   app.on('will-quit', () => {
+    windowManager?.dispose();
     trayService?.destroy();
     db?.close();
   });

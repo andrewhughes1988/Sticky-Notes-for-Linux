@@ -1,1232 +1,359 @@
-import React, { useRef, useEffect, useState, useCallback } from 'react';
-import { Autosave } from '../utils/autosave';
-import { sanitizeHtml } from '../utils/sanitize';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Extension } from '@tiptap/core';
+import { EditorContent, useEditor } from '@tiptap/react';
+import StarterKit from '@tiptap/starter-kit';
+import TaskList from '@tiptap/extension-task-list';
+import TaskItem from '@tiptap/extension-task-item';
+import Placeholder from '@tiptap/extension-placeholder';
+import { Autosave, AutosaveTimer } from '../utils/autosave';
+import { sanitizeHtml, upgradeLegacyChecklistHtml } from '../utils/sanitize';
+import { ActiveFormatFlags } from './EditorToolbar';
 
-export type FormatKey = 'bold' | 'italic' | 'underline' | 'strike';
+const compositionPending = new Error('Finish composing text before closing this note.');
 
-export interface FormatState {
-  bold: boolean;
-  italic: boolean;
-  underline: boolean;
-  strike: boolean;
+export interface RichEditorHandle {
+  format: (command: string) => void;
+  insertChecklist: () => void;
+  flush: () => Promise<void>;
 }
 
 interface RichEditorProps {
   initialHtml: string;
   placeholder?: string;
+  containerRef: React.RefObject<HTMLDivElement>;
   onChange: (html: string, plainText: string) => Promise<void>;
-  onFormatChange?: (formats: {
-    bold: boolean;
-    italic: boolean;
-    underline: boolean;
-    strike: boolean;
-    list: boolean;
-    checklist: boolean;
-  }) => void;
-  editorRefExpose?: (api: {
-    format: (command: string, value?: string) => void;
-    insertChecklist: () => void;
-    flush: () => Promise<void>;
-  }) => void;
+  onFormatChange?: (formats: ActiveFormatFlags) => void;
+  editorRefExpose?: (api: RichEditorHandle) => void;
 }
+
+const StickyShortcuts = Extension.create({
+  name: 'stickyShortcuts',
+  addKeyboardShortcuts() {
+    return {
+      'Mod-t': () => this.editor.commands.toggleStrike(),
+      'Mod-Shift-x': () => this.editor.commands.toggleStrike(),
+      'Mod-Shift-l': () => this.editor.commands.toggleBulletList(),
+      'Mod-y': () => this.editor.commands.redo(),
+    };
+  },
+});
+
+const StickyTaskItem = TaskItem.extend({
+  addNodeView() {
+    return ({ node: initialNode, getPos, editor }) => {
+      let node = initialNode;
+
+      const listItem = document.createElement('li');
+      listItem.dataset.type = 'taskItem';
+      listItem.dataset.checked = node.attrs.checked ? 'true' : 'false';
+      listItem.classList.add('task-item');
+      listItem.classList.toggle('checked', Boolean(node.attrs.checked));
+
+      const checkboxWrapper = document.createElement('label');
+      checkboxWrapper.contentEditable = 'false';
+
+      const checkbox = document.createElement('input');
+      checkbox.type = 'checkbox';
+      checkbox.className = 'checklist-checkbox';
+      checkbox.checked = Boolean(node.attrs.checked);
+      checkbox.setAttribute('aria-label', 'Toggle checklist item');
+
+      const content = document.createElement('div');
+      content.className = 'checklist-text';
+
+      const getSelectedTaskPositions = (): number[] => {
+        const { from, to, empty } = editor.state.selection;
+        if (empty) return [];
+        const positions: number[] = [];
+        editor.state.doc.nodesBetween(from, to, (descendant, pos) => {
+          if (descendant.type.name === 'taskItem') {
+            positions.push(pos);
+            return false;
+          }
+          return true;
+        });
+        return positions;
+      };
+
+      checkbox.addEventListener('mousedown', (event) => {
+        const pos = typeof getPos === 'function' ? getPos() : undefined;
+        if (typeof pos !== 'number') return;
+        const selected = getSelectedTaskPositions();
+        if (selected.length > 1 && selected.includes(pos)) {
+          event.preventDefault();
+        }
+      });
+
+      checkbox.addEventListener('change', () => {
+        if (!editor.isEditable) {
+          checkbox.checked = Boolean(node.attrs.checked);
+          return;
+        }
+        const pos = typeof getPos === 'function' ? getPos() : undefined;
+        if (typeof pos !== 'number') return;
+
+        const checked = checkbox.checked;
+        const selected = getSelectedTaskPositions();
+        const targets = selected.length > 1 && selected.includes(pos) ? selected : [pos];
+
+        const { tr } = editor.state;
+        for (const targetPos of targets) {
+          const targetNode = tr.doc.nodeAt(targetPos);
+          if (targetNode && targetNode.type.name === 'taskItem') {
+            tr.setNodeMarkup(targetPos, undefined, { ...targetNode.attrs, checked });
+          }
+        }
+        editor.view.dispatch(tr);
+      });
+
+      checkboxWrapper.appendChild(checkbox);
+      listItem.appendChild(checkboxWrapper);
+      listItem.appendChild(content);
+
+      return {
+        dom: listItem,
+        contentDOM: content,
+        update(updatedNode) {
+          if (updatedNode.type !== node.type) return false;
+          node = updatedNode;
+          const isChecked = Boolean(updatedNode.attrs.checked);
+          listItem.dataset.checked = isChecked ? 'true' : 'false';
+          listItem.classList.toggle('checked', isChecked);
+          checkbox.checked = isChecked;
+          return true;
+        },
+      };
+    };
+  },
+});
 
 export const RichEditor: React.FC<RichEditorProps> = ({
   initialHtml,
   placeholder = 'Take a note...',
+  containerRef,
   onChange,
   onFormatChange,
   editorRefExpose,
 }) => {
-  const editorRef = useRef<HTMLDivElement>(null);
   const composing = useRef(false);
   const [saveError, setSaveError] = useState('');
-  const initialContent = useRef(initialHtml);
-  const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const autosaveTimer = useRef(new AutosaveTimer());
   const autosave = useRef(new Autosave());
+  const onChangeRef = useRef(onChange);
 
-  // State for pending styling on a collapsed caret
-  const pendingFormatsRef = useRef<FormatState | null>(null);
+  useEffect(() => {
+    onChangeRef.current = onChange;
+  }, [onChange]);
 
-  // Action History Stack (Undo/Redo for note body changes)
-  interface HistorySnapshot {
-    html: string;
-    selectionOffsets: { start: number; end: number } | null;
-  }
-  const historyStackRef = useRef<HistorySnapshot[]>([]);
-  const historyIndexRef = useRef<number>(-1);
-  const isUndoingRef = useRef<boolean>(false);
-  const historyDebounceTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const initialContent = useMemo(() => upgradeLegacyChecklistHtml(initialHtml), [initialHtml]);
 
-  // Helper to extract clean plain text preserving paragraph and list newlines
-  const extractPlainText = (element: HTMLElement): string => {
-    return (element.innerText || element.textContent || '')
-      .replace(/\u200B/g, '')
-      .replace(/\u00a0/g, ' ')
-      .trim();
-  };
+  const editor = useEditor({
+    extensions: [
+      StarterKit.configure({
+        blockquote: false,
+        code: false,
+        codeBlock: false,
+        heading: false,
+        horizontalRule: false,
+        orderedList: false,
+        dropcursor: false,
+        gapcursor: false,
+        trailingNode: false,
+        undoRedo: { depth: 100 },
+        link: {
+          openOnClick: false,
+          autolink: true,
+          protocols: ['http', 'https', 'mailto'],
+          HTMLAttributes: {
+            rel: 'noopener noreferrer',
+          },
+        },
+      }),
+      TaskList.configure({
+        HTMLAttributes: {
+          class: 'task-list',
+        },
+      }),
+      StickyTaskItem.configure({
+        nested: false,
+      }),
+      Placeholder.configure({
+        placeholder,
+      }),
+      StickyShortcuts,
+    ],
+    content: initialContent,
+    editorProps: {
+      attributes: {
+        class: 'note-editor-content',
+        role: 'textbox',
+        'aria-multiline': 'true',
+        'aria-label': 'Note text',
+        spellcheck: 'false',
+        autocorrect: 'off',
+        autocapitalize: 'off',
+      },
+      transformPastedHTML: (html) => sanitizeHtml(html),
+      handleClick: (_view, _pos, event) => {
+        if (!event.ctrlKey && !event.metaKey) return false;
+        const target = event.target as HTMLElement | null;
+        const anchor = target?.closest<HTMLAnchorElement>('a[href]');
+        if (anchor?.href) {
+          event.preventDefault();
+          void window.stickyNotesAPI.openExternalLink(anchor.href).catch(() => {
+            // Invalid or blocked URL
+          });
+          return true;
+        }
+        return false;
+      },
+    },
+  });
 
-  // Immediate save flush for pending dirty edits
+  const syncFormats = useCallback(() => {
+    if (!editor || !onFormatChange) return;
+    onFormatChange({
+      bold: editor.isActive('bold'),
+      italic: editor.isActive('italic'),
+      underline: editor.isActive('underline'),
+      strike: editor.isActive('strike'),
+      list: editor.isActive('bulletList'),
+      checklist: editor.isActive('taskList'),
+    });
+  }, [editor, onFormatChange]);
+
   const flush = useCallback(async () => {
-    if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
     if (composing.current) {
-      const message = 'Finish composing text before closing this note.';
-      setSaveError(message);
-      throw new Error(message);
+      setSaveError(compositionPending.message);
+      throw compositionPending;
     }
+    autosaveTimer.current.reset();
     try {
       await autosave.current.flush(async () => {
-        const editor = editorRef.current;
-        if (!editor) throw new Error('Editor is unavailable');
-        await onChange(editor.innerHTML, extractPlainText(editor));
+        if (composing.current) throw compositionPending;
+        if (!editor || editor.isDestroyed) throw new Error('Editor is unavailable');
+        const html = editor.getHTML();
+        const plain = editor.getText({ blockSeparator: '\n' }).replace(/\u200B/g, '').trim();
+        await onChangeRef.current(html, plain);
       });
       setSaveError('');
     } catch (error) {
-      setSaveError('Changes could not be saved.');
+      if (error !== compositionPending) setSaveError('Changes could not be saved.');
       throw error;
     }
-  }, [onChange]);
+  }, [editor]);
 
-  const autosaveNow = useCallback(() => { void flush().catch(() => {}); }, [flush]);
+  const autosaveNow = useCallback(() => {
+    if (!composing.current) void flush().catch(() => {});
+  }, [flush]);
 
-  // Helper to find parent checklist item
-  const getParentChecklistItem = (node: Node | null): HTMLElement | null => {
-    let curr: Node | null = node;
-    while (curr && curr !== editorRef.current) {
-      if (curr instanceof HTMLElement && curr.classList.contains('checklist-item')) {
-        return curr;
-      }
-      curr = curr.parentNode;
-    }
-    return null;
-  };
-
-  // Helper to find parent list item (li)
-  const getParentListItem = (node: Node | null): HTMLElement | null => {
-    let curr: Node | null = node;
-    while (curr && curr !== editorRef.current) {
-      if (curr instanceof HTMLElement && curr.tagName.toLowerCase() === 'li') {
-        return curr;
-      }
-      curr = curr.parentNode;
-    }
-    return null;
-  };
-
-  // Helper to find top-level block inside the editor
-  const getParentBlock = (node: Node | null): HTMLElement | null => {
-    let curr: Node | null = node;
-    while (curr && curr.parentNode !== editorRef.current && curr !== editorRef.current) {
-      if (curr.nodeType === Node.ELEMENT_NODE) {
-        return curr as HTMLElement;
-      }
-      curr = curr.parentNode;
-    }
-    return curr instanceof HTMLElement ? curr : null;
-  };
-
-  // Helper to map commands to format keys
-  const getCommandKey = (command: string): FormatKey => {
-    const c = command.toLowerCase();
-    if (c === 'bold') return 'bold';
-    if (c === 'italic') return 'italic';
-    if (c === 'underline') return 'underline';
-    return 'strike';
-  };
-
-  // Helper to extract active formats at a specific DOM node
-  const getDomFormatsAtNode = (node: Node | null, root: HTMLElement | null): FormatState => {
-    const result: FormatState = { bold: false, italic: false, underline: false, strike: false };
-    let curr: Node | null = node;
-    while (curr && curr !== root) {
-      if (curr.nodeType === Node.ELEMENT_NODE) {
-        const el = curr as HTMLElement;
-        const tag = el.tagName.toLowerCase();
-        const style = el.style;
-        const textDec = (style.textDecoration || style.textDecorationLine || '').toLowerCase();
-        const weight = (style.fontWeight || '').toLowerCase();
-
-        if (tag === 'b' || tag === 'strong' || weight === 'bold' || parseInt(weight || '0', 10) >= 700) {
-          result.bold = true;
-        }
-        if (tag === 'i' || tag === 'em' || style.fontStyle.toLowerCase() === 'italic') {
-          result.italic = true;
-        }
-        if (tag === 'u' || textDec.includes('underline')) {
-          result.underline = true;
-        }
-        if (tag === 's' || tag === 'strike' || tag === 'del' || textDec.includes('line-through')) {
-          result.strike = true;
-        }
-      }
-      curr = curr.parentNode;
-    }
-    return result;
-  };
-
-  // Get all text nodes intersecting a range
-  const getTextNodesInRange = (range: Range, root: HTMLElement): Text[] => {
-    const textNodes: Text[] = [];
-    const container = range.commonAncestorContainer;
-    const searchRoot = container.nodeType === Node.TEXT_NODE ? (container.parentNode || root) : container;
-
-    const treeWalker = document.createTreeWalker(
-      searchRoot,
-      NodeFilter.SHOW_TEXT,
-      {
-        acceptNode: (node) => {
-          try {
-            if (!range.intersectsNode(node)) return NodeFilter.FILTER_REJECT;
-            const text = (node.textContent || '').replace(/\u200B/g, '');
-            if (text.length === 0) return NodeFilter.FILTER_REJECT;
-
-            // Ensure at least one character of this node is actually inside the range
-            if (range.startContainer === node && range.endContainer === node) {
-              if (range.endOffset <= range.startOffset) return NodeFilter.FILTER_REJECT;
-            } else if (range.startContainer === node) {
-              if (range.startOffset >= (node.textContent || '').length) return NodeFilter.FILTER_REJECT;
-            } else if (range.endContainer === node) {
-              if (range.endOffset <= 0) return NodeFilter.FILTER_REJECT;
-            }
-
-            return NodeFilter.FILTER_ACCEPT;
-          } catch {
-            return NodeFilter.FILTER_REJECT;
-          }
-        },
-      }
-    );
-
-    let curr = treeWalker.nextNode();
-    while (curr) {
-      textNodes.push(curr as Text);
-      curr = treeWalker.nextNode();
-    }
-    return textNodes;
-  };
-
-  // Evaluate format state across a selection range ('all' | 'some' | 'none')
-  const getRangeFormatState = (range: Range, command: string, root: HTMLElement): 'all' | 'some' | 'none' => {
-    const key = getCommandKey(command);
-    const textNodes = getTextNodesInRange(range, root);
-
-    if (textNodes.length === 0) {
-      const formats = getDomFormatsAtNode(range.startContainer, root);
-      return formats[key] ? 'all' : 'none';
-    }
-
-    let count = 0;
-    for (const node of textNodes) {
-      const formats = getDomFormatsAtNode(node, root);
-      if (formats[key]) {
-        count++;
-      }
-    }
-
-    if (count === textNodes.length) return 'all';
-    if (count > 0) return 'some';
-    return 'none';
-  };
-
-  const unwrapElement = (el: HTMLElement) => {
-    const parent = el.parentNode;
-    if (!parent) return;
-    while (el.firstChild) {
-      parent.insertBefore(el.firstChild, el);
-    }
-    parent.removeChild(el);
-  };
-
-  const cleanEmptySpan = (el: HTMLElement) => {
-    if (
-      el.tagName.toLowerCase() === 'span' &&
-      !el.getAttribute('style') &&
-      el.classList.length === 0
-    ) {
-      unwrapElement(el);
-    }
-  };
-
-  const isolateElementAroundNode = (node: Node, el: HTMLElement) => {
-    if (!el.parentNode) return;
-    if (node.previousSibling) {
-      const leftEl = el.cloneNode(false) as HTMLElement;
-      let sibling: ChildNode | null = el.firstChild;
-      while (sibling && sibling !== node) {
-        const next: ChildNode | null = sibling.nextSibling;
-        leftEl.appendChild(sibling);
-        sibling = next;
-      }
-      if (leftEl.hasChildNodes()) {
-        el.parentNode.insertBefore(leftEl, el);
-      }
-    }
-    if (node.nextSibling) {
-      const rightEl = el.cloneNode(false) as HTMLElement;
-      let sibling: ChildNode | null = node.nextSibling;
-      while (sibling) {
-        const next: ChildNode | null = sibling.nextSibling;
-        rightEl.appendChild(sibling);
-        sibling = next;
-      }
-      if (rightEl.hasChildNodes()) {
-        el.parentNode.insertBefore(rightEl, el.nextSibling);
-      }
-    }
-  };
-
-  // Helper to get character selection offsets relative to editor root
-  const getSelectionOffsets = (root: HTMLElement): { start: number; end: number } | null => {
-    const sel = window.getSelection();
-    if (!sel || sel.rangeCount === 0) return null;
-    const currentRange = sel.getRangeAt(0);
-
-    const preStartRange = document.createRange();
-    preStartRange.selectNodeContents(root);
-    preStartRange.setEnd(currentRange.startContainer, currentRange.startOffset);
-    const start = preStartRange.toString().length;
-
-    const preEndRange = document.createRange();
-    preEndRange.selectNodeContents(root);
-    preEndRange.setEnd(currentRange.endContainer, currentRange.endOffset);
-    const end = preEndRange.toString().length;
-
-    return { start, end };
-  };
-
-  // Helper to restore character selection offsets relative to editor root
-  const restoreSelectionOffsets = (root: HTMLElement, start: number, end: number) => {
-    const sel = window.getSelection();
-    if (!sel) return;
-
-    let currentOffset = 0;
-    let startNode: Node | null = null;
-    let startNodeOffset = 0;
-    let endNode: Node | null = null;
-    let endNodeOffset = 0;
-
-    const treeWalker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null);
-    let textNode = treeWalker.nextNode();
-
-    while (textNode) {
-      const textLen = (textNode.textContent || '').length;
-
-      if (!startNode) {
-        if (currentOffset + textLen > start) {
-          startNode = textNode;
-          startNodeOffset = start - currentOffset;
-        } else if (currentOffset + textLen === start) {
-          const next = treeWalker.nextNode();
-          if (next) {
-            startNode = next;
-            startNodeOffset = 0;
-            textNode = next;
-            currentOffset += textLen;
-            continue;
-          } else {
-            startNode = textNode;
-            startNodeOffset = textLen;
-          }
-        }
-      }
-
-      if (!endNode && currentOffset + textLen >= end) {
-        endNode = textNode;
-        endNodeOffset = end - currentOffset;
-        break;
-      }
-
-      currentOffset += textLen;
-      textNode = treeWalker.nextNode();
-    }
-
-    if (startNode && endNode) {
-      const newRange = document.createRange();
-      newRange.setStart(startNode, startNodeOffset);
-      newRange.setEnd(endNode, endNodeOffset);
-      sel.removeAllRanges();
-      sel.addRange(newRange);
-    }
-  };
-
-  // Take a snapshot of the editor's current DOM HTML & selection state
-  const takeSnapshot = useCallback((): HistorySnapshot | null => {
-    if (!editorRef.current) return null;
-    return {
-      html: editorRef.current.innerHTML,
-      selectionOffsets: getSelectionOffsets(editorRef.current),
-    };
-  }, []);
-
-  // Push snapshot to history stack
-  const pushHistory = useCallback((options?: { force?: boolean }) => {
-    if (!editorRef.current || isUndoingRef.current) return;
-    const snap = takeSnapshot();
-    if (!snap) return;
-
-    const stack = historyStackRef.current;
-    const idx = historyIndexRef.current;
-
-    if (!options?.force && idx >= 0 && idx < stack.length && stack[idx].html === snap.html) {
-      stack[idx].selectionOffsets = snap.selectionOffsets;
-      return;
-    }
-
-    const newStack = stack.slice(0, idx + 1);
-    newStack.push(snap);
-    if (newStack.length > 100) {
-      newStack.shift();
-    }
-    historyStackRef.current = newStack;
-    historyIndexRef.current = newStack.length - 1;
-  }, [takeSnapshot]);
-
-  const applyOrRemoveRangeFormat = (range: Range, command: string, root: HTMLElement) => {
-    const key = getCommandKey(command);
-    const formatState = getRangeFormatState(range, command, root);
-    const shouldApply = (formatState === 'none');
-
-    // 1. Split start text node if inside
-    if (range.startContainer.nodeType === Node.TEXT_NODE) {
-      const textNode = range.startContainer as Text;
-      if (range.startOffset > 0 && range.startOffset < (textNode.textContent || '').length) {
-        const rightText = textNode.splitText(range.startOffset);
-        if (range.startContainer === range.endContainer) {
-          range.setEnd(rightText, range.endOffset - range.startOffset);
-        }
-        range.setStart(rightText, 0);
-      }
-    }
-
-    // 2. Split end text node if inside
-    if (range.endContainer.nodeType === Node.TEXT_NODE) {
-      const textNode = range.endContainer as Text;
-      if (range.endOffset > 0 && range.endOffset < (textNode.textContent || '').length) {
-        textNode.splitText(range.endOffset);
-      }
-    }
-
-    const textNodes = getTextNodesInRange(range, root);
-
-    for (const textNode of textNodes) {
-      const currentFormats = getDomFormatsAtNode(textNode, root);
-
-      if (shouldApply) {
-        if (!currentFormats[key]) {
-          let tagName = 'span';
-          if (key === 'bold') tagName = 'strong';
-          else if (key === 'italic') tagName = 'em';
-          else if (key === 'underline') tagName = 'u';
-          else if (key === 'strike') tagName = 's';
-
-          const wrapper = document.createElement(tagName);
-          textNode.parentNode?.insertBefore(wrapper, textNode);
-          wrapper.appendChild(textNode);
-        }
-      } else {
-        // Remove format from this textNode
-        let curr: Node = textNode;
-        while (curr && curr.parentNode !== root && curr.parentNode) {
-          const parent: Node = curr.parentNode;
-          if (parent.nodeType === Node.ELEMENT_NODE) {
-            const el = parent as HTMLElement;
-            const tag = el.tagName.toLowerCase();
-
-            if (key === 'underline') {
-              if (tag === 'u') {
-                isolateElementAroundNode(curr, el);
-                unwrapElement(el);
-                curr = curr.parentNode || parent;
-                continue;
-              } else if (el.style.textDecoration || el.style.textDecorationLine) {
-                const currentDec = el.style.textDecoration || el.style.textDecorationLine || '';
-                const newDec = currentDec.replace(/underline/gi, '').trim();
-                if (newDec) el.style.textDecoration = newDec;
-                else {
-                  el.style.textDecoration = '';
-                  cleanEmptySpan(el);
-                }
-              }
-            } else if (key === 'strike') {
-              if (tag === 's' || tag === 'strike' || tag === 'del') {
-                isolateElementAroundNode(curr, el);
-                unwrapElement(el);
-                curr = curr.parentNode || parent;
-                continue;
-              } else if (el.style.textDecoration || el.style.textDecorationLine) {
-                const currentDec = el.style.textDecoration || el.style.textDecorationLine || '';
-                const newDec = currentDec.replace(/line-through/gi, '').trim();
-                if (newDec) el.style.textDecoration = newDec;
-                else {
-                  el.style.textDecoration = '';
-                  cleanEmptySpan(el);
-                }
-              }
-            } else if (key === 'bold') {
-              if (tag === 'b' || tag === 'strong') {
-                isolateElementAroundNode(curr, el);
-                unwrapElement(el);
-                curr = curr.parentNode || parent;
-                continue;
-              } else if (el.style.fontWeight) {
-                el.style.fontWeight = '';
-                cleanEmptySpan(el);
-              }
-            } else if (key === 'italic') {
-              if (tag === 'i' || tag === 'em') {
-                isolateElementAroundNode(curr, el);
-                unwrapElement(el);
-                curr = curr.parentNode || parent;
-                continue;
-              } else if (el.style.fontStyle) {
-                el.style.fontStyle = '';
-                cleanEmptySpan(el);
-              }
-            }
-          }
-          curr = parent;
-        }
-      }
-    }
-  };
-
-  // Update format states on selection change
-  const checkFormats = useCallback(() => {
-    if (!onFormatChange || !editorRef.current) return;
-    try {
-      const selection = window.getSelection();
-      const inChecklist = Boolean(
-        selection && selection.anchorNode && getParentChecklistItem(selection.anchorNode)
-      );
-      const inBulletList = !inChecklist && Boolean(
-        selection && selection.anchorNode && getParentListItem(selection.anchorNode)
-      );
-
-      if (pendingFormatsRef.current && selection && selection.isCollapsed) {
-        onFormatChange({
-          ...pendingFormatsRef.current,
-          list: inBulletList,
-          checklist: inChecklist,
-        });
-        return;
-      }
-
-      let currentFormats: FormatState = { bold: false, italic: false, underline: false, strike: false };
-      if (selection && selection.rangeCount > 0) {
-        const range = selection.getRangeAt(0);
-        if (range.collapsed) {
-          currentFormats = getDomFormatsAtNode(selection.anchorNode, editorRef.current);
-        } else {
-          currentFormats = {
-            bold: getRangeFormatState(range, 'bold', editorRef.current) === 'all',
-            italic: getRangeFormatState(range, 'italic', editorRef.current) === 'all',
-            underline: getRangeFormatState(range, 'underline', editorRef.current) === 'all',
-            strike: getRangeFormatState(range, 'strikeThrough', editorRef.current) === 'all',
-          };
-        }
-      }
-
-      onFormatChange({
-        ...currentFormats,
-        list: inBulletList,
-        checklist: inChecklist,
-      });
-    } catch {
-      // Ignore
-    }
-  }, [onFormatChange]);
-
-  const handleContentChange = useCallback(() => {
-    if (!editorRef.current || composing.current) return;
+  const scheduleAutosave = useCallback(() => {
+    if (composing.current) return;
     autosave.current.edited();
-    if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
-    debounceTimerRef.current = setTimeout(autosaveNow, 300);
+    autosaveTimer.current.schedule(autosaveNow);
   }, [autosaveNow]);
 
-  // Undo last action on the note body
-  const undo = useCallback(() => {
-    if (!editorRef.current) return;
-    if (historyDebounceTimerRef.current) {
-      clearTimeout(historyDebounceTimerRef.current);
-      historyDebounceTimerRef.current = null;
-    }
+  // Subscribe to Tiptap update / selection / blur events
+  useEffect(() => {
+    if (!editor) return;
 
-    const snap = takeSnapshot();
-    const stack = historyStackRef.current;
-    const idx = historyIndexRef.current;
-    if (snap && idx >= 0 && idx < stack.length && stack[idx].html !== snap.html) {
-      pushHistory();
-    }
+    const handleUpdate = () => {
+      scheduleAutosave();
+      syncFormats();
+    };
+    const handleSelectionUpdate = () => {
+      syncFormats();
+    };
+    const handleBlur = () => {
+      autosaveNow();
+    };
 
-    if (historyIndexRef.current <= 0) return;
+    editor.on('update', handleUpdate);
+    editor.on('selectionUpdate', handleSelectionUpdate);
+    editor.on('blur', handleBlur);
+    syncFormats();
 
-    isUndoingRef.current = true;
-    historyIndexRef.current -= 1;
-    const target = historyStackRef.current[historyIndexRef.current];
+    return () => {
+      editor.off('update', handleUpdate);
+      editor.off('selectionUpdate', handleSelectionUpdate);
+      editor.off('blur', handleBlur);
+    };
+  }, [editor, scheduleAutosave, syncFormats, autosaveNow]);
 
-    editorRef.current.innerHTML = target.html;
-    if (target.selectionOffsets) {
-      restoreSelectionOffsets(
-        editorRef.current,
-        target.selectionOffsets.start,
-        target.selectionOffsets.end
-      );
-    }
+  // Track IME composition directly on ProseMirror's DOM element
+  useEffect(() => {
+    if (!editor) return;
+    const dom = editor.view.dom;
+    const timer = autosaveTimer.current;
+    const onCompositionStart = () => {
+      composing.current = true;
+      timer.pause();
+    };
+    const onCompositionEnd = () => {
+      composing.current = false;
+      scheduleAutosave();
+    };
+    dom.addEventListener('compositionstart', onCompositionStart);
+    dom.addEventListener('compositionend', onCompositionEnd);
+    return () => {
+      dom.removeEventListener('compositionstart', onCompositionStart);
+      dom.removeEventListener('compositionend', onCompositionEnd);
+      timer.reset();
+    };
+  }, [editor, scheduleAutosave]);
 
-    isUndoingRef.current = false;
-    checkFormats();
-    handleContentChange();
-  }, [takeSnapshot, pushHistory, checkFormats, handleContentChange]);
+  // Register editor flush handshake ONLY while RichEditor is mounted & ready (Decision D2)
+  useEffect(() => {
+    if (!editor) return;
+    const unsubscribe = window.stickyNotesAPI.onFlushRequested(async () => {
+      if (containerRef.current) containerRef.current.inert = true;
+      await flush();
+    });
+    const resume = window.stickyNotesAPI.onFlushCancelled(() => {
+      if (containerRef.current) containerRef.current.inert = false;
+    });
+    return () => {
+      unsubscribe();
+      resume();
+    };
+  }, [editor, containerRef, flush]);
 
-  // Redo last undone action on the note body
-  const redo = useCallback(() => {
-    if (!editorRef.current) return;
-    if (historyDebounceTimerRef.current) {
-      clearTimeout(historyDebounceTimerRef.current);
-      historyDebounceTimerRef.current = null;
-    }
-
-    if (historyIndexRef.current >= historyStackRef.current.length - 1) return;
-
-    isUndoingRef.current = true;
-    historyIndexRef.current += 1;
-    const target = historyStackRef.current[historyIndexRef.current];
-
-    editorRef.current.innerHTML = target.html;
-    if (target.selectionOffsets) {
-      restoreSelectionOffsets(
-        editorRef.current,
-        target.selectionOffsets.start,
-        target.selectionOffsets.end
-      );
-    }
-
-    isUndoingRef.current = false;
-    checkFormats();
-    handleContentChange();
-  }, [checkFormats, handleContentChange]);
-
-  // Toggle or insert an interactive checklist item
-  const toggleChecklist = useCallback(() => {
-    if (!editorRef.current) return;
-    editorRef.current.focus();
-
-    pushHistory(); // Record state before checklist operation
-
-    const selection = window.getSelection();
-    if (!selection || selection.rangeCount === 0) return;
-
-    const range = selection.getRangeAt(0);
-
-    // 1. If inside a bullet list (li), convert Bullet List to Checklist (mutually exclusive)
-    const existingLi = getParentListItem(selection.anchorNode);
-    if (existingLi) {
-      const parentUl = existingLi.closest('ul, ol');
-      const innerHtml = existingLi.innerHTML.trim();
-      const cleanHtml = innerHtml === '' || innerHtml === '<br>' ? '&nbsp;' : innerHtml;
-
-      const checklistDiv = document.createElement('div');
-      checklistDiv.className = 'checklist-item';
-      checklistDiv.innerHTML = `<input type="checkbox" class="checklist-checkbox" contenteditable="false" /><span class="checklist-text">${cleanHtml}</span>`;
-
-      if (parentUl && parentUl.children.length === 1) {
-        // Only 1 list item in UL: replace entire UL
-        parentUl.parentNode?.replaceChild(checklistDiv, parentUl);
-      } else if (parentUl) {
-        // Multiple items in UL: insert checklist and remove this LI
-        parentUl.parentNode?.insertBefore(checklistDiv, parentUl.nextSibling);
-        existingLi.remove();
-      }
-
-      const span = checklistDiv.querySelector('.checklist-text');
-      if (span) {
-        const newRange = document.createRange();
-        newRange.selectNodeContents(span);
-        newRange.collapse(false);
-        selection.removeAllRanges();
-        selection.addRange(newRange);
-      }
-
-      pushHistory();
-      checkFormats();
-      handleContentChange();
-      return;
-    }
-
-    // 2. If already inside a checklist item: toggle OFF back to normal paragraph
-    const existingChecklist = getParentChecklistItem(selection.anchorNode);
-    if (existingChecklist) {
-      const textSpan = (existingChecklist.querySelector('.checklist-text') || existingChecklist.querySelector('span')) as HTMLElement | null;
-      const innerHtml = textSpan ? textSpan.innerHTML : existingChecklist.innerText;
-      const normalDiv = document.createElement('div');
-      normalDiv.innerHTML = innerHtml.trim() === '' || innerHtml === '&nbsp;' ? '<br>' : innerHtml;
-
-      existingChecklist.parentNode?.replaceChild(normalDiv, existingChecklist);
-
-      const newRange = document.createRange();
-      newRange.selectNodeContents(normalDiv);
-      newRange.collapse(false);
-      selection.removeAllRanges();
-      selection.addRange(newRange);
-
-      pushHistory();
-      checkFormats();
-      handleContentChange();
-      return;
-    }
-
-    // 3. Normal line: convert to single Checklist item
-    const parentBlock = getParentBlock(selection.anchorNode);
-    let contentHtml = '';
-
-    const checklistDiv = document.createElement('div');
-    checklistDiv.className = 'checklist-item';
-
-    if (parentBlock && parentBlock !== editorRef.current) {
-      contentHtml = parentBlock.innerHTML.replace(/<br\s*[\/]?>/gi, '').trim();
-      checklistDiv.innerHTML = `<input type="checkbox" class="checklist-checkbox" contenteditable="false" /><span class="checklist-text">${contentHtml || '&nbsp;'}</span>`;
-      parentBlock.parentNode?.replaceChild(checklistDiv, parentBlock);
-    } else {
-      const selectedHtml = range.extractContents();
-      const tempDiv = document.createElement('div');
-      tempDiv.appendChild(selectedHtml);
-      contentHtml = tempDiv.innerHTML.replace(/<br\s*[\/]?>/gi, '').trim();
-      checklistDiv.innerHTML = `<input type="checkbox" class="checklist-checkbox" contenteditable="false" /><span class="checklist-text">${contentHtml || '&nbsp;'}</span>`;
-      range.insertNode(checklistDiv);
-    }
-
-    const span = checklistDiv.querySelector('.checklist-text');
-    if (span) {
-      const newRange = document.createRange();
-      newRange.selectNodeContents(span);
-      newRange.collapse(false);
-      selection.removeAllRanges();
-      selection.addRange(newRange);
-    }
-
-    pushHistory();
-    checkFormats();
-    handleContentChange();
-  }, [pushHistory, checkFormats, handleContentChange]);
-
-  // Execute a rich formatting command
   const format = useCallback(
-    (command: string, value?: string) => {
-      if (!editorRef.current) return;
-      editorRef.current.focus();
-
-      pushHistory(); // Record state before format change
-
-      const selection = window.getSelection();
-      if (!selection || selection.rangeCount === 0) return;
-
-      // 1. Lists & Checklists
-      if (command === 'insertChecklist') {
-        toggleChecklist();
-        return;
-      }
-      if (command === 'insertUnorderedList') {
-        const checklistItem = getParentChecklistItem(selection.anchorNode);
-        if (checklistItem) {
-          // Mutually exclusive: convert Checklist item directly to a Bullet List
-          const textSpan = (checklistItem.querySelector('.checklist-text') || checklistItem.querySelector('span')) as HTMLElement | null;
-          const innerHtml = textSpan ? textSpan.innerHTML : checklistItem.innerText;
-          const cleanHtml = innerHtml.trim() === '' || innerHtml === '&nbsp;' ? '<br>' : innerHtml;
-
-          const ul = document.createElement('ul');
-          const li = document.createElement('li');
-          li.innerHTML = cleanHtml;
-          ul.appendChild(li);
-
-          checklistItem.parentNode?.replaceChild(ul, checklistItem);
-
-          const newRange = document.createRange();
-          newRange.selectNodeContents(li);
-          newRange.collapse(false);
-          selection.removeAllRanges();
-          selection.addRange(newRange);
-
-          pushHistory();
-          checkFormats();
-          handleContentChange();
-          return;
-        }
-        document.execCommand(command, false, value);
-        pushHistory();
-        checkFormats();
-        handleContentChange();
-        return;
-      }
-
-      const key = getCommandKey(command);
-      const range = selection.getRangeAt(0);
-
-      // 2. Collapsed Caret Formatting: Toggle independently
-      if (range.collapsed) {
-        const currentFormats = pendingFormatsRef.current || getDomFormatsAtNode(selection.anchorNode, editorRef.current);
-        const nextState = !currentFormats[key];
-        pendingFormatsRef.current = {
-          ...currentFormats,
-          [key]: nextState,
-        };
-        checkFormats();
-        return;
-      }
-
-      // 3. Highlighted Range Selection: preserve exact character selection across DOM unwrap/normalize
-      const offsets = getSelectionOffsets(editorRef.current);
-      applyOrRemoveRangeFormat(range, command, editorRef.current);
-      editorRef.current.normalize();
-
-      if (offsets) {
-        restoreSelectionOffsets(editorRef.current, offsets.start, offsets.end);
-      }
-
-      pendingFormatsRef.current = null;
-      pushHistory(); // Record state after format change
-      checkFormats();
-      handleContentChange();
+    (command: string) => {
+      if (!editor) return;
+      const chain = editor.chain().focus();
+      if (command === 'bold') chain.toggleBold().run();
+      else if (command === 'italic') chain.toggleItalic().run();
+      else if (command === 'underline') chain.toggleUnderline().run();
+      else if (command === 'strikeThrough') chain.toggleStrike().run();
+      else if (command === 'insertUnorderedList') chain.toggleBulletList().run();
+      else if (command === 'insertChecklist') chain.toggleTaskList().run();
+      syncFormats();
     },
-    [pushHistory, toggleChecklist, checkFormats, handleContentChange]
+    [editor, syncFormats]
   );
 
-  // Expose formatting and flush APIs to parent
+  const insertChecklist = useCallback(() => {
+    if (!editor) return;
+    editor.chain().focus().toggleTaskList().run();
+    syncFormats();
+  }, [editor, syncFormats]);
+
   useEffect(() => {
     if (editorRefExpose) {
-      editorRefExpose({ format, insertChecklist: toggleChecklist, flush });
+      editorRefExpose({ format, insertChecklist, flush });
     }
-  }, [editorRefExpose, format, toggleChecklist, flush]);
-
-  useEffect(() => {
-    if (editorRef.current) {
-      editorRef.current.innerHTML = sanitizeHtml(initialContent.current);
-      pushHistory({ force: true });
-    }
-    return () => {
-      if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
-      if (historyDebounceTimerRef.current) clearTimeout(historyDebounceTimerRef.current);
-    };
-  }, [pushHistory]);
-
-  // Keyboard listener for shortcuts and checklist enter/backspace handling
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
-    // 1. Action History Shortcuts (only applies to note body changes)
-    if (e.ctrlKey || e.metaKey) {
-      if ((e.key === 'z' || e.key === 'Z') && !e.shiftKey) {
-        e.preventDefault();
-        undo();
-        return;
-      }
-      if (e.key === 'y' || e.key === 'Y' || ((e.key === 'z' || e.key === 'Z') && e.shiftKey)) {
-        e.preventDefault();
-        redo();
-        return;
-      }
-    }
-
-    // 2. Destructive Key Handling: Backspace / Delete on non-collapsed selections
-    if (e.key === 'Backspace' || e.key === 'Delete') {
-      const sel = window.getSelection();
-      if (sel && !sel.isCollapsed && sel.rangeCount > 0) {
-        pushHistory();
-      }
-    }
-
-    // 3. Formatting shortcuts
-    if (e.ctrlKey || e.metaKey) {
-      if (e.key === 'b' || e.key === 'B') {
-        e.preventDefault();
-        format('bold');
-      } else if (e.key === 'i' || e.key === 'I') {
-        e.preventDefault();
-        format('italic');
-      } else if (e.key === 'u' || e.key === 'U') {
-        e.preventDefault();
-        format('underline');
-      } else if (e.key === 't' || e.key === 'T' || (e.shiftKey && (e.key === 'x' || e.key === 'X'))) {
-        e.preventDefault();
-        format('strikeThrough');
-      } else if (e.shiftKey && (e.key === 'l' || e.key === 'L')) {
-        e.preventDefault();
-        format('insertUnorderedList');
-      }
-      return;
-    }
-
-    // 2. Handle Enter key inside a checklist item
-    if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey && !e.altKey) {
-      const selection = window.getSelection();
-      if (selection && selection.rangeCount > 0) {
-        const checklistItem = getParentChecklistItem(selection.anchorNode);
-        if (checklistItem) {
-          e.preventDefault();
-          const textSpan = (checklistItem.querySelector('.checklist-text') || checklistItem.querySelector('span')) as HTMLElement | null;
-          const text = textSpan ? (textSpan.innerText || textSpan.textContent || '').trim() : '';
-
-          if (!text || text === '') {
-            // Empty checklist item -> Exit checklist and convert to regular paragraph
-            const normalDiv = document.createElement('div');
-            normalDiv.innerHTML = '<br>';
-            checklistItem.parentNode?.replaceChild(normalDiv, checklistItem);
-
-            const newRange = document.createRange();
-            newRange.setStart(normalDiv, 0);
-            newRange.collapse(true);
-            selection.removeAllRanges();
-            selection.addRange(newRange);
-          } else {
-            // Create a new checklist item row directly below
-            const newChecklist = document.createElement('div');
-            newChecklist.className = 'checklist-item';
-            newChecklist.innerHTML = `<input type="checkbox" class="checklist-checkbox" contenteditable="false" /><span class="checklist-text">&nbsp;</span>`;
-
-            if (checklistItem.nextSibling) {
-              checklistItem.parentNode?.insertBefore(newChecklist, checklistItem.nextSibling);
-            } else {
-              checklistItem.parentNode?.appendChild(newChecklist);
-            }
-
-            const newSpan = newChecklist.querySelector('.checklist-text');
-            if (newSpan) {
-              const newRange = document.createRange();
-              newRange.selectNodeContents(newSpan);
-              newRange.collapse(true);
-              selection.removeAllRanges();
-              selection.addRange(newRange);
-            }
-          }
-          handleContentChange();
-          checkFormats();
-          return;
-        }
-      }
-    }
-
-    // 3. Handle Backspace at start of checklist item
-    if (e.key === 'Backspace') {
-      const selection = window.getSelection();
-      if (selection && selection.rangeCount > 0 && selection.isCollapsed) {
-        const checklistItem = getParentChecklistItem(selection.anchorNode);
-        if (checklistItem) {
-          const textSpan = (checklistItem.querySelector('.checklist-text') || checklistItem.querySelector('span')) as HTMLElement | null;
-          const range = selection.getRangeAt(0);
-          if (range.startOffset === 0 && (selection.anchorNode === textSpan || selection.anchorNode === textSpan?.firstChild)) {
-            e.preventDefault();
-            const innerHtml = textSpan ? textSpan.innerHTML : '<br>';
-            const normalDiv = document.createElement('div');
-            normalDiv.innerHTML = innerHtml.trim() === '' || innerHtml === '&nbsp;' ? '<br>' : innerHtml;
-            checklistItem.parentNode?.replaceChild(normalDiv, checklistItem);
-
-            const newRange = document.createRange();
-            newRange.selectNodeContents(normalDiv);
-            newRange.collapse(true);
-            selection.removeAllRanges();
-            selection.addRange(newRange);
-            handleContentChange();
-            checkFormats();
-            return;
-          }
-        }
-      }
-    }
-  };
-
-  const getSelectedChecklistItems = (): HTMLElement[] => {
-    const root = editorRef.current;
-    const selection = window.getSelection();
-    if (!root || !selection || selection.isCollapsed || selection.rangeCount === 0) return [];
-
-    const range = selection.getRangeAt(0);
-    if (!root.contains(range.startContainer) || !root.contains(range.endContainer)) return [];
-
-    const start = range.cloneRange();
-    const end = range.cloneRange();
-    start.collapse(true);
-    end.collapse(false);
-
-    return Array.from(root.querySelectorAll<HTMLElement>('.checklist-item')).filter((item) => {
-      const text = item.querySelector('.checklist-text') || item.querySelector('span');
-      if (!text) return false;
-      const itemRange = document.createRange();
-      itemRange.selectNodeContents(text);
-      const walker = document.createTreeWalker(text, NodeFilter.SHOW_TEXT);
-      const firstText = walker.nextNode();
-      if (firstText) {
-        let lastText = firstText;
-        let nextText: Node | null;
-        while ((nextText = walker.nextNode())) lastText = nextText;
-        itemRange.setStart(firstText, 0);
-        itemRange.setEnd(lastText, lastText.textContent?.length || 0);
-      }
-      return itemRange.compareBoundaryPoints(Range.START_TO_START, end) < 0 &&
-        itemRange.compareBoundaryPoints(Range.END_TO_END, start) > 0;
-    });
-  };
-
-  const handleMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
-    const target = e.target as HTMLElement;
-    if (!target.classList.contains('checklist-checkbox')) return;
-    const item = target.closest<HTMLElement>('.checklist-item');
-    if (item && getSelectedChecklistItems().includes(item)) e.preventDefault();
-  };
-
-  // Delegate click for checklist checkboxes
-  const handleClick = (e: React.MouseEvent<HTMLDivElement>) => {
-    const target = e.target as HTMLElement;
-    if (target && target.classList.contains('checklist-checkbox')) {
-      const checkbox = target as HTMLInputElement;
-      const parent = checkbox.closest<HTMLElement>('.checklist-item');
-      if (parent) {
-        const selectedItems = getSelectedChecklistItems();
-        const items = selectedItems.includes(parent) ? selectedItems : [parent];
-        const checked = checkbox.checked;
-        pushHistory();
-        for (const item of items) {
-          const input = item.querySelector<HTMLInputElement>('.checklist-checkbox');
-          if (!input) continue;
-          input.checked = checked;
-          item.classList.toggle('checked', checked);
-          if (checked) input.setAttribute('checked', 'checked');
-          else input.removeAttribute('checked');
-        }
-        handleContentChange();
-      }
-    }
-  };
-
-  // Intercept paste to sanitize HTML and prevent malformed layout/large base64 injection
-  const handlePaste = (e: React.ClipboardEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    const clipboardData = e.clipboardData;
-    const rawHtml = clipboardData.getData('text/html');
-    const plainText = clipboardData.getData('text/plain');
-
-    if (rawHtml) {
-      const clean = sanitizeHtml(rawHtml);
-      document.execCommand('insertHTML', false, clean);
-    } else if (plainText) {
-      document.execCommand('insertText', false, plainText);
-    }
-    handleContentChange();
-    checkFormats();
-  };
-
-  // Helper to split any ancestor tags that contain formatting not present in target formats
-  const splitUnwantedAncestors = (
-    range: Range,
-    formats: FormatState,
-    root: HTMLElement
-  ): { parentNode: Node; insertBefore: Node | null } => {
-    let container = range.startContainer;
-    let offset = range.startOffset;
-
-    // 1. If inside a Text node, split it if caret is in the middle
-    let leftNode: Node = container;
-    let rightNode: Node | null = null;
-    if (container.nodeType === Node.TEXT_NODE) {
-      const textNode = container as Text;
-      const text = textNode.textContent || '';
-      if (offset < text.length) {
-        rightNode = textNode.splitText(offset);
-      }
-    }
-
-    const hasUnwantedFormat = (el: HTMLElement): boolean => {
-      const tag = el.tagName.toLowerCase();
-      const style = el.style;
-      const textDec = (style.textDecoration || style.textDecorationLine || '').toLowerCase();
-      const weight = (style.fontWeight || '').toLowerCase();
-      const isBold = tag === 'b' || tag === 'strong' || weight === 'bold' || parseInt(weight || '0', 10) >= 700;
-      const isItalic = tag === 'i' || tag === 'em' || style.fontStyle.toLowerCase() === 'italic';
-      const isUnderline = tag === 'u' || textDec.includes('underline');
-      const isStrike = tag === 's' || tag === 'strike' || tag === 'del' || textDec.includes('line-through');
-
-      if (isBold && !formats.bold) return true;
-      if (isItalic && !formats.italic) return true;
-      if (isUnderline && !formats.underline) return true;
-      if (isStrike && !formats.strike) return true;
-      return false;
-    };
-
-    let currLeft: Node = leftNode;
-    let currRight: Node | null = rightNode;
-
-    while (currLeft && currLeft !== root) {
-      const parent: Node | null = currLeft.parentNode;
-      if (!parent || parent === root) break;
-
-      if (parent.nodeType === Node.ELEMENT_NODE && hasUnwantedFormat(parent as HTMLElement)) {
-        const parentEl = parent as HTMLElement;
-        const rightParent = parentEl.cloneNode(false) as HTMLElement;
-
-        let sibling: Node | null = currRight ? currRight : currLeft.nextSibling;
-
-        while (sibling) {
-          const next = sibling.nextSibling;
-          rightParent.appendChild(sibling);
-          sibling = next;
-        }
-
-        if (parentEl.parentNode) {
-          parentEl.parentNode.insertBefore(rightParent, parentEl.nextSibling);
-        }
-
-        if (rightParent.textContent === '' && !rightParent.querySelector('input, img, br')) {
-          currRight = rightParent.nextSibling;
-          rightParent.remove();
-        } else {
-          currRight = rightParent;
-        }
-
-        currLeft = parent;
-      } else {
-        // Parent is a wanted ancestor or neutral container - insertion point is right here
-        return {
-          parentNode: parent,
-          insertBefore: currRight || (currLeft ? currLeft.nextSibling : null),
-        };
-      }
-    }
-
-    return {
-      parentNode: root,
-      insertBefore: currRight || (currLeft && currLeft !== root ? currLeft.nextSibling : null),
-    };
-  };
-
-  // Attach native beforeinput listener to intercept typing when pendingFormats are active
-  useEffect(() => {
-    const el = editorRef.current;
-    if (!el) return;
-
-    const onNativeBeforeInput = (e: InputEvent) => {
-      if (e.inputType === 'insertText' && e.data && pendingFormatsRef.current && editorRef.current) {
-        e.preventDefault();
-        const selection = window.getSelection();
-        if (!selection || selection.rangeCount === 0) return;
-
-        const range = selection.getRangeAt(0);
-        range.deleteContents();
-
-        const formats = pendingFormatsRef.current;
-        const text = e.data;
-
-        // 1. Split away any ancestor tags that contain styles the user untoggled
-        const ref = splitUnwantedAncestors(range, formats, editorRef.current);
-
-        // 2. Build the styled wrapper or plain text node according to formats
-        const textNode = document.createTextNode(text);
-        let insertNode: Node = textNode;
-
-        let rootEl: HTMLElement | null = null;
-        let leafEl: HTMLElement | null = null;
-
-        const wrapInTag = (tagName: string) => {
-          const wrapper = document.createElement(tagName);
-          if (!rootEl) rootEl = wrapper;
-          if (leafEl) leafEl.appendChild(wrapper);
-          leafEl = wrapper;
-        };
-
-        if (formats.bold) wrapInTag('strong');
-        if (formats.italic) wrapInTag('em');
-        if (formats.underline) wrapInTag('u');
-        if (formats.strike) wrapInTag('s');
-
-        if (rootEl && leafEl) {
-          (leafEl as HTMLElement).appendChild(textNode);
-          insertNode = rootEl;
-        }
-
-        // 3. Insert into the split container at the exact caret location
-        const targetParent = (ref.parentNode || editorRef.current) as HTMLElement;
-        targetParent.insertBefore(insertNode, ref.insertBefore);
-
-        // 4. Place caret immediately after the inserted text
-        const newRange = document.createRange();
-        newRange.setStart(textNode, text.length);
-        newRange.collapse(true);
-        selection.removeAllRanges();
-        selection.addRange(newRange);
-
-        pendingFormatsRef.current = null;
-        handleContentChange();
-        checkFormats();
-      }
-    };
-
-    el.addEventListener('beforeinput', onNativeBeforeInput);
-    return () => {
-      el.removeEventListener('beforeinput', onNativeBeforeInput);
-    };
-  }, [checkFormats, handleContentChange]);
-
-  const handleSelectionReset = (e: React.SyntheticEvent) => {
-    if ('key' in e) {
-      const key = (e as React.KeyboardEvent).key;
-      if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End', 'PageUp', 'PageDown'].includes(key)) {
-        pendingFormatsRef.current = null;
-      }
-    } else {
-      pendingFormatsRef.current = null;
-    }
-    checkFormats();
-  };
-  const handleInput = () => {
-    if (composing.current) return;
-    handleContentChange();
-    checkFormats();
-
-    if (historyDebounceTimerRef.current) {
-      clearTimeout(historyDebounceTimerRef.current);
-    }
-    historyDebounceTimerRef.current = setTimeout(() => {
-      pushHistory();
-    }, 400);
-  };
-
-  const handleBlur = () => {
-    if (historyDebounceTimerRef.current) {
-      clearTimeout(historyDebounceTimerRef.current);
-      historyDebounceTimerRef.current = null;
-    }
-    pushHistory();
-    autosaveNow();
-  };
+  }, [editorRefExpose, format, insertChecklist, flush]);
 
   return (
     <div className="note-editor-wrapper app-no-drag">
-      <div
-        ref={editorRef}
-        className="note-editor-content"
-        role="textbox"
-        aria-multiline="true"
-        aria-label="Note text"
-        contentEditable={true}
-        suppressContentEditableWarning={true}
-        spellCheck={false}
-        autoCorrect="off"
-        autoCapitalize="off"
-        data-placeholder={placeholder}
-        onBlur={handleBlur}
-        onPaste={handlePaste}
-        onInput={handleInput}
-        onKeyUp={handleSelectionReset}
-        onMouseDown={handleMouseDown}
-        onMouseUp={handleSelectionReset}
-        onKeyDown={handleKeyDown}
-        onClick={handleClick}
-        onCompositionStart={() => {
-          composing.current = true;
-          if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
-        }}
-        onCompositionEnd={() => {
-          composing.current = false;
-          handleInput();
-        }}
-      />
+      <EditorContent editor={editor} className="note-editor-tiptap" />
       {saveError && (
-        <div role="alert" className="app-no-drag">
-          {saveError} <button type="button" onClick={autosaveNow}>Retry save</button>
+        <div role="alert" className="editor-error-banner app-no-drag">
+          <span>{saveError}</span>
+          <button type="button" className="inline-retry-btn" onClick={autosaveNow}>
+            Retry save
+          </button>
         </div>
       )}
     </div>

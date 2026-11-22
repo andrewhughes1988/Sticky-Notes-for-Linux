@@ -1,18 +1,30 @@
-import React from 'react';
+import React, { Suspense, lazy } from 'react';
 import ReactDOM from 'react-dom/client';
-import { NoteView } from './components/NoteView';
-import { ManagerView } from './components/ManagerView';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import './styles/index.css';
 
-function App() {
-  const { isNoteWindow: isNote, noteId } = window.stickyNotesAPI;
+const NoteView = lazy(() => import('./components/NoteView'));
+const ManagerView = lazy(() => import('./components/ManagerView'));
 
-  if (isNote && noteId) {
-    return <NoteView noteId={noteId} />;
+function App() {
+  if (!window.stickyNotesAPI) {
+    return (
+      <div className="error-boundary" role="alert">
+        <h2 className="error-boundary-title">Desktop environment required</h2>
+        <p className="error-boundary-body">
+          Sticky Notes must be launched inside the Electron desktop application.
+        </p>
+      </div>
+    );
   }
 
-  return <ManagerView />;
+  const { isNoteWindow: isNote, noteId } = window.stickyNotesAPI;
+
+  return (
+    <Suspense fallback={null}>
+      {isNote && noteId ? <NoteView noteId={noteId} /> : <ManagerView />}
+    </Suspense>
+  );
 }
 
 ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(

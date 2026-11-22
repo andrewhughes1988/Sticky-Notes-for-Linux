@@ -83,6 +83,7 @@ X-GNOME-Autostart-enabled=true
 Name=Sticky Notes
 Comment=Windows-style Sticky Notes for Linux
 Icon=com.netsysprep.stickynotes
+StartupWMClass=com.netsysprep.stickynotes
 Categories=Utility;TextEditor;
 StartupNotify=false
 Terminal=false

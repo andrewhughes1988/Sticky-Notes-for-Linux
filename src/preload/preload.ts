@@ -1,56 +1,42 @@
 import { contextBridge, ipcRenderer } from 'electron';
-import { StickyNotesAPI } from '../shared/types';
+import { AppConfig, SettingChangeListener, StickyNotesAPI } from '../shared/types';
 
 // Parse CLI flags passed to this specific renderer window
 const args = process.argv;
 const noteIdArg = args.find((arg) => arg.startsWith('--note-id='));
 const windowTypeArg = args.find((arg) => arg.startsWith('--window-type='));
 
-const currentNoteId = noteIdArg ? noteIdArg.split('=')[1] : null;
-const windowType = windowTypeArg ? windowTypeArg.split('=')[1] : 'note';
+const currentNoteId = noteIdArg ? noteIdArg.slice('--note-id='.length) : null;
+const windowType = windowTypeArg ? windowTypeArg.slice('--window-type='.length) : 'note';
 
 const api: StickyNotesAPI = {
   isNoteWindow: windowType === 'note',
   noteId: currentNoteId,
 
-  createNote: (initial) => {
-    return ipcRenderer.invoke('notes:create', initial);
-  },
+  createNote: (initial) => ipcRenderer.invoke('notes:create', initial),
+  getNote: (id: string) => ipcRenderer.invoke('notes:getById', id),
+  getNotePreviews: (query) => ipcRenderer.invoke('notes:getPreviews', query),
+  updateNote: (id, updates) => ipcRenderer.invoke('notes:update', id, updates),
+  closeNoteWindow: (id: string) => ipcRenderer.invoke('notes:closeWindow', id),
+  openNoteWindow: (id: string) => ipcRenderer.invoke('notes:openWindow', id),
+  deleteNote: (id: string) => ipcRenderer.invoke('notes:delete', id),
+  togglePin: (id: string) => ipcRenderer.invoke('notes:togglePin', id),
 
-  getNote: (id: string) => {
-    return ipcRenderer.invoke('notes:getById', id);
-  },
+  getDeletedNotes: () => ipcRenderer.invoke('notes:getDeleted'),
+  restoreNote: (id: string) => ipcRenderer.invoke('notes:restore', id),
+  permanentlyDeleteNote: (id: string) => ipcRenderer.invoke('notes:deletePermanent', id),
+  emptyTrash: () => ipcRenderer.invoke('notes:emptyTrash'),
+  exportNotes: (format) => ipcRenderer.invoke('notes:export', format),
+  getMigrationBackupCount: () => ipcRenderer.invoke('backups:count'),
+  purgeMigrationBackups: () => ipcRenderer.invoke('backups:purge'),
 
-  getNotePreviews: (query) => {
-    return ipcRenderer.invoke('notes:getPreviews', query);
-  },
+  getEncryptionStatus: () => ipcRenderer.invoke('security:getEncryptionStatus'),
+  setEncryptionEnabled: (enabled: boolean) => ipcRenderer.invoke('security:setEncryption', enabled),
 
-  updateNote: (id, updates) => {
-    return ipcRenderer.invoke('notes:update', id, updates);
-  },
-
-  closeNoteWindow: (id: string) => {
-    return ipcRenderer.invoke('notes:closeWindow', id);
-  },
-
-  openNoteWindow: (id: string) => {
-    return ipcRenderer.invoke('notes:openWindow', id);
-  },
-
-  deleteNote: (id: string) => {
-    return ipcRenderer.invoke('notes:delete', id);
-  },
-
-  togglePin: (id: string) => {
-    return ipcRenderer.invoke('notes:togglePin', id);
-  },
-
-  showManagerWindow: () => {
-    return ipcRenderer.invoke('manager:show');
-  },
-  closeManagerWindow: () => {
-    return ipcRenderer.invoke('manager:close');
-  },
+  showManagerWindow: () => ipcRenderer.invoke('manager:show'),
+  closeManagerWindow: () => ipcRenderer.invoke('manager:close'),
+  quitApp: () => ipcRenderer.invoke('app:quit'),
+  openExternalLink: (url: string) => ipcRenderer.invoke('shell:openExternal', url),
 
   onNotesChanged: (callback: () => void) => {
     const handler = () => callback();
@@ -60,8 +46,12 @@ const api: StickyNotesAPI = {
     };
   },
 
-  onSettingsChanged: (callback: (key: string, value: any) => void) => {
-    const handler = (_event: any, key: string, value: any) => callback(key, value);
+  onSettingsChanged: (callback: SettingChangeListener) => {
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      key: keyof AppConfig,
+      value: AppConfig[keyof AppConfig]
+    ) => callback(key, value);
     ipcRenderer.on('settings:changed', handler);
     return () => {
       ipcRenderer.removeListener('settings:changed', handler);
@@ -70,29 +60,31 @@ const api: StickyNotesAPI = {
 
   onFlushRequested: (callback) => {
     const listener = (_event: Electron.IpcRendererEvent, requestId: number) => {
-      Promise.resolve().then(callback).then(
-        () => ipcRenderer.send('editor:flushed', requestId, true),
-        () => ipcRenderer.send('editor:flushed', requestId, false),
-      );
+      Promise.resolve()
+        .then(callback)
+        .then(
+          () => ipcRenderer.send('editor:flushed', requestId, true),
+          () => ipcRenderer.send('editor:flushed', requestId, false)
+        );
     };
     ipcRenderer.on('editor:flush', listener);
     ipcRenderer.send('editor:ready');
-    return () => { ipcRenderer.removeListener('editor:flush', listener); };
+    return () => {
+      ipcRenderer.removeListener('editor:flush', listener);
+      ipcRenderer.send('editor:unready');
+    };
   },
 
   onFlushCancelled: (callback) => {
     const listener = () => callback();
     ipcRenderer.on('editor:resume', listener);
-    return () => { ipcRenderer.removeListener('editor:resume', listener); };
+    return () => {
+      ipcRenderer.removeListener('editor:resume', listener);
+    };
   },
 
-  getConfig: () => {
-    return ipcRenderer.invoke('settings:getAll');
-  },
-
-  setConfig: (key, value) => {
-    return ipcRenderer.invoke('settings:set', key, value);
-  },
+  getConfig: () => ipcRenderer.invoke('settings:getAll'),
+  setConfig: (key, value) => ipcRenderer.invoke('settings:set', key, value),
 };
 
 contextBridge.exposeInMainWorld('stickyNotesAPI', api);

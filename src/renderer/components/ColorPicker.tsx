@@ -28,13 +28,26 @@ const ColorPickerComponent: React.FC<ColorPickerProps> = ({
     const popover = popoverRef.current;
     popover?.querySelector<HTMLButtonElement>('[aria-pressed="true"]')?.focus();
 
-    return () => {
-      if (
-        trigger instanceof HTMLElement && trigger.isConnected
-        && (popover?.contains(document.activeElement) || document.activeElement === document.body)
-      ) trigger.focus();
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        event.stopPropagation();
+        onClose();
+      }
     };
-  }, [triggerRef]);
+    popover?.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      popover?.removeEventListener('keydown', handleKeyDown);
+      if (
+        trigger instanceof HTMLElement &&
+        trigger.isConnected &&
+        (popover?.contains(document.activeElement) || document.activeElement === document.body)
+      ) {
+        trigger.focus();
+      }
+    };
+  }, [triggerRef, onClose]);
 
   return (
     <>
@@ -47,12 +60,7 @@ const ColorPickerComponent: React.FC<ColorPickerProps> = ({
         aria-label="Note options"
         onBlur={(event) => {
           const next = event.relatedTarget;
-          if (next && next !== triggerRef?.current && !event.currentTarget.contains(next)) onClose();
-        }}
-        onKeyDown={(event) => {
-          if (event.key === 'Escape') {
-            event.preventDefault();
-            event.stopPropagation();
+          if (next && next !== triggerRef?.current && !event.currentTarget.contains(next)) {
             onClose();
           }
         }}
@@ -65,7 +73,7 @@ const ColorPickerComponent: React.FC<ColorPickerProps> = ({
               <button
                 key={colorKey}
                 type="button"
-                className={`color-swatch ${isSelected ? 'active' : ''}`}
+                className={`color-swatch ${isSelected ? 'active' : ''} ${colorKey === 'white' ? 'color-swatch-light' : ''}`}
                 style={{ backgroundColor: def.dotColor }}
                 aria-label={def.name}
                 aria-pressed={isSelected}
@@ -81,20 +89,28 @@ const ColorPickerComponent: React.FC<ColorPickerProps> = ({
 
         <div className="color-menu-divider" />
 
-        <button type="button" className="color-menu-item" onClick={() => {
-          onOpenManager();
-          onClose();
-        }}>
-          <List size={16} />
+        <button
+          type="button"
+          className="color-menu-item"
+          onClick={() => {
+            onOpenManager();
+            onClose();
+          }}
+        >
+          <List size={16} aria-hidden="true" />
           <span>Notes list</span>
         </button>
 
-        <button type="button" className="color-menu-item delete-item" onClick={() => {
-          onDeleteNote();
-          onClose();
-        }}>
-          <Trash2 size={16} />
-          <span>Delete note</span>
+        <button
+          type="button"
+          className="color-menu-item delete-item"
+          onClick={() => {
+            onDeleteNote();
+            onClose();
+          }}
+        >
+          <Trash2 size={16} aria-hidden="true" />
+          <span>Move to Trash</span>
         </button>
       </div>
     </>

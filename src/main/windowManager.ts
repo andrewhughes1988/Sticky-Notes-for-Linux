@@ -1,9 +1,83 @@
-import { BrowserWindow, shell, screen, app, nativeImage, NativeImage, WebContents, IpcMainEvent, IpcMainInvokeEvent, dialog } from 'electron';
+import {
+  BrowserWindow,
+  Menu,
+  MenuItemConstructorOptions,
+  shell,
+  screen,
+  app,
+  nativeImage,
+  nativeTheme,
+  NativeImage,
+  WebContents,
+  IpcMainEvent,
+  IpcMainInvokeEvent,
+  dialog,
+} from 'electron';
 import { pathToFileURL } from 'node:url';
 import path from 'node:path';
 import fs from 'node:fs';
-import { DatabaseService } from './database';
-import { Note, NOTE_COLORS } from '../shared/types';
+import { DatabaseService, WindowBounds } from './database';
+import { parseSafeExternalUrl } from './htmlSanitizer';
+import { resolveLinuxOzoneSwitches } from './linuxPlatform';
+import { logger } from './logger';
+import { Note, NOTE_COLORS, ExportResult } from '../shared/types';
+
+function isPositionVisible(x: number, y: number): boolean {
+  try {
+    const displays = screen.getAllDisplays();
+    return displays.some((d) => {
+      const b = d.bounds;
+      return x + 50 > b.x && x < b.x + b.width && y + 50 > b.y && y < b.y + b.height;
+    });
+  } catch {
+    return true;
+  }
+}
+
+export function attachContextMenu(win: BrowserWindow): void {
+  win.webContents.on('context-menu', (_event, params) => {
+    const template: MenuItemConstructorOptions[] = [];
+
+    if (params.linkURL) {
+      const safeUrl = parseSafeExternalUrl(params.linkURL);
+      if (safeUrl) {
+        template.push(
+          {
+            label: 'Open Link in Browser',
+            click: () => {
+              void shell.openExternal(safeUrl).catch((err) => {
+                logger.error('Failed to open external link from context menu', err);
+              });
+            },
+          },
+          { type: 'separator' }
+        );
+      }
+    }
+
+    if (params.isEditable) {
+      template.push(
+        { label: 'Cut', role: 'cut', enabled: params.editFlags.canCut },
+        { label: 'Copy', role: 'copy', enabled: params.editFlags.canCopy },
+        { label: 'Paste', role: 'paste', enabled: params.editFlags.canPaste },
+        {
+          label: 'Paste as Plain Text',
+          role: 'pasteAndMatchStyle',
+          enabled: params.editFlags.canPaste,
+        },
+        { type: 'separator' },
+        { label: 'Select All', role: 'selectAll', enabled: params.editFlags.canSelectAll }
+      );
+    } else if (params.selectionText) {
+      template.push({ label: 'Copy', role: 'copy' });
+    }
+
+    if (template.length > 0) {
+      const menu = Menu.buildFromTemplate(template);
+      menu.popup({ window: win });
+    }
+  });
+}
 
 export class WindowManager {
   private noteWindows: Map<string, BrowserWindow> = new Map();
@@ -15,60 +89,73 @@ export class WindowManager {
   private distPath: string;
   private rendererUrl: URL;
   private readyEditors = new Set<WebContents>();
+  private stalledEditors = new WeakMap<WebContents, () => void>();
   private approvedCloses = new Set<string>();
   private closingNotes = new Map<string, Promise<void>>();
-  private flushRequests = new Map<WebContents, { id: number; finish: (saved: boolean) => void; promise: Promise<void> }>();
+  private flushRequests = new Map<
+    WebContents,
+    { id: number; finish: (saved: boolean) => void; promise: Promise<void> }
+  >();
   private flushId = 0;
   private flushingAll = false;
-  private isQuitting: boolean = false;
+  private isQuitting = false;
+  private isNativeWayland = false;
+  private restoreTimers = new Set<NodeJS.Timeout>();
+  private broadcastTimers: Map<string, NodeJS.Timeout> = new Map();
 
   constructor(db: DatabaseService) {
     this.db = db;
+    this.isNativeWayland =
+      process.platform === 'linux' &&
+      resolveLinuxOzoneSwitches(process.env, process.argv).isNativeWayland;
     this.preloadPath = path.join(__dirname, '../preload/preload.js');
-    // In dev: build/icon.png relative to dist-electron/main. In packaged app: process.resourcesPath/build/icon.png
     this.iconPath = app.isPackaged
       ? path.join(process.resourcesPath, 'build', 'icon.png')
       : path.join(__dirname, '../../build/icon.png');
     if (fs.existsSync(this.iconPath)) {
       this.iconImage = nativeImage.createFromPath(this.iconPath);
     }
-    // In both dev and packaged (inside app.asar), dist/index.html is at ../../dist/index.html relative to dist-electron/main
     this.distPath = path.join(__dirname, '../../dist');
     const devUrl = !app.isPackaged && process.env.VITE_DEV_SERVER_URL;
-    this.rendererUrl = devUrl ? new URL(devUrl) : pathToFileURL(path.join(this.distPath, 'index.html'));
-    if (devUrl && (!['http:', 'https:'].includes(this.rendererUrl.protocol) ||
-        !['localhost', '127.0.0.1', '[::1]'].includes(this.rendererUrl.hostname))) {
+    this.rendererUrl = devUrl
+      ? new URL(devUrl)
+      : pathToFileURL(path.join(this.distPath, 'index.html'));
+    if (
+      devUrl &&
+      (!['http:', 'https:'].includes(this.rendererUrl.protocol) ||
+        !['localhost', '127.0.0.1', '[::1]'].includes(this.rendererUrl.hostname))
+    ) {
       throw new Error('The development renderer must run on loopback.');
     }
   }
 
   /**
-   * Restores all notes that were previously open in the database
+   * Restores all notes that were previously open in the database.
+   * Staggers window creation when restoring more than 4 notes to avoid compositor spikes.
    */
   public restoreOpenNotes(): void {
     if (this.flushingAll) return;
     const openNotes = this.db.getOpenNotes();
     if (openNotes.length === 0) {
-      // If no notes are open, check if any notes exist in the database
-      const allNotes = this.db.getNotePreviews({ limit: 1 });
-      if (allNotes.length === 0) {
+      const mostRecent = this.db.getMostRecentlyActiveNote();
+      if (mostRecent) {
+        this.openNote(mostRecent.id);
+      } else {
         this.createNewNoteWindow({
           title: 'Welcome to Sticky Notes',
-          content_html: '<div>Welcome to <b>Sticky Notes</b> for Linux!</div><ul><li>Type your thoughts freely</li><li>Change colors via the <b>...</b> menu</li><li>Format text with <b>B</b>, <i>I</i>, <u>U</u>, <s>S</s></li><li>Search all notes in the Notes Manager</li></ul>',
-          content_plain: 'Welcome to Sticky Notes for Linux!\n- Type your thoughts freely\n- Change colors via the ... menu\n- Format text with B, I, U, S\n- Search all notes in the Notes Manager',
+          content_html:
+            '<p>Welcome to <strong>Sticky Notes</strong> for Linux!</p><ul><li><p>Type your thoughts freely</p></li><li><p>Change colors via the <strong>...</strong> menu</p></li><li><p>Format text with <strong>B</strong>, <em>I</em>, <u>U</u>, <s>S</s></p></li><li><p>Search all notes in the Notes Manager</p></li></ul>',
+          content_plain:
+            'Welcome to Sticky Notes for Linux!\n- Type your thoughts freely\n- Change colors via the ... menu\n- Format text with B, I, U, S\n- Search all notes in the Notes Manager',
           color: 'yellow',
         });
-      } else {
-        // Automatically restore the most recently active note on the desktop
-        const mostRecent = allNotes[0];
-        if (mostRecent) {
-          this.openNote(mostRecent.id);
-        } else {
-          this.showManagerWindow();
-        }
       }
-    } else {
-      for (const note of openNotes) {
+      return;
+    }
+
+    openNotes.forEach((note, index) => {
+      const openOne = () => {
+        if (this.isQuitting || this.flushingAll) return;
         const existing = this.noteWindows.get(note.id);
         if (existing && !existing.isDestroyed()) {
           if (existing.isMinimized()) existing.restore();
@@ -77,8 +164,18 @@ export class WindowManager {
         } else {
           this.createNoteWindow(note);
         }
+      };
+
+      if (index < 4) {
+        openOne();
+      } else {
+        const timer = setTimeout(() => {
+          this.restoreTimers.delete(timer);
+          openOne();
+        }, (index - 3) * 35);
+        this.restoreTimers.add(timer);
       }
-    }
+    });
   }
 
   /**
@@ -86,7 +183,6 @@ export class WindowManager {
    */
   public createNewNoteWindow(initial: Partial<Note> = {}): Note {
     if (this.flushingAll) throw new Error('Sticky Notes is closing.');
-    // Determine positioning offset from active window or center
     let pos_x = initial.pos_x;
     let pos_y = initial.pos_y;
 
@@ -127,6 +223,8 @@ export class WindowManager {
       existing.show();
       existing.focus();
       existing.moveTop();
+      this.db.recordNoteActivity(id);
+      this.stalledEditors.get(existing.webContents)?.();
       return;
     }
 
@@ -152,23 +250,10 @@ export class WindowManager {
     let x = note.pos_x !== null ? note.pos_x : undefined;
     let y = note.pos_y !== null ? note.pos_y : undefined;
 
-    // Multi-monitor safety: ensure saved position is visible on an active display
-    if (x !== undefined && y !== undefined) {
-      try {
-        const displays = screen.getAllDisplays();
-        const isVisible = displays.some((d) => {
-          const b = d.bounds;
-          return x! + 50 > b.x && x! < b.x + b.width && y! + 50 > b.y && y! < b.y + b.height;
-        });
-
-        if (!isVisible) {
-          const primary = screen.getPrimaryDisplay().workArea;
-          x = primary.x + 40;
-          y = primary.y + 40;
-        }
-      } catch {
-        // Ignore and fallback
-      }
+    if (x !== undefined && y !== undefined && !isPositionVisible(x, y)) {
+      const primary = screen.getPrimaryDisplay().workArea;
+      x = primary.x + 40;
+      y = primary.y + 40;
     }
 
     const win = new BrowserWindow({
@@ -178,11 +263,11 @@ export class WindowManager {
       minHeight: 200,
       x,
       y,
-      frame: false, // Frameless for exact Windows Sticky Notes styling
+      frame: false,
       maximizable: false,
       icon: this.iconImage || this.iconPath,
       hasShadow: true,
-      backgroundColor: themeDef.light.body,
+      backgroundColor: themeDef.body,
       alwaysOnTop: note.is_pinned === 1,
       skipTaskbar: false,
       autoHideMenuBar: true,
@@ -198,10 +283,37 @@ export class WindowManager {
     });
 
     if (this.iconImage) {
-      try { win.setIcon(this.iconImage); } catch { /* ignore */ }
+      try {
+        win.setIcon(this.iconImage);
+      } catch {
+        // Ignore
+      }
+    }
+
+    // Re-assert always-on-top after window realization so KWin/XWayland reliably applies _NET_WM_STATE_ABOVE
+    if (note.is_pinned === 1) {
+      win.once('ready-to-show', () => {
+        if (!win.isDestroyed()) win.setAlwaysOnTop(true);
+      });
     }
 
     this.noteWindows.set(note.id, win);
+    attachContextMenu(win);
+
+    const persistNoteBounds = () => {
+      if (win.isDestroyed()) return;
+      const bounds = win.getBounds();
+      // Native Wayland cannot read global (x, y) coordinates and reports (0, 0).
+      // Preserve previously stored coordinates instead of overwriting them with (0, 0).
+      if (this.isNativeWayland && bounds.x === 0 && bounds.y === 0) {
+        const existing = this.db.getNoteById(note.id);
+        if (existing && existing.pos_x !== null && existing.pos_y !== null) {
+          bounds.x = existing.pos_x;
+          bounds.y = existing.pos_y;
+        }
+      }
+      this.db.updateNoteBounds(note.id, bounds);
+    };
 
     // Save window geometry on move/resize (debounced)
     let resizeTimeout: NodeJS.Timeout | null = null;
@@ -209,10 +321,10 @@ export class WindowManager {
       if (win.isDestroyed()) return;
       if (resizeTimeout) clearTimeout(resizeTimeout);
       resizeTimeout = setTimeout(() => {
-        if (win.isDestroyed()) return;
-        const bounds = win.getBounds();
-        try { this.db.updateNoteBounds(note.id, bounds); } catch (error) {
-          console.error('Failed to save note window bounds:', error);
+        try {
+          persistNoteBounds();
+        } catch (error) {
+          logger.error('Failed to save note window bounds', error);
         }
       }, 300);
     };
@@ -220,14 +332,18 @@ export class WindowManager {
     win.on('move', saveBounds);
     win.on('resize', saveBounds);
 
-    // When the window is closed via UI, flush final bounds and mark is_open = 0 in DB (unless app is quitting or this is the last note window)
     const contents = win.webContents;
     win.on('close', (event) => {
       if (!this.isQuitting && !this.approvedCloses.has(note.id)) {
         event.preventDefault();
         if (!this.flushingAll) {
           void this.closeNoteWindow(note.id).catch(() => {
-            dialog.showErrorBox('Note could not close', 'Check the note for a save error and try again.');
+            if (!win.isDestroyed() && !this.stalledEditors.has(contents)) {
+              dialog.showErrorBox(
+                'Note could not close',
+                'Check the note for a save error and try again.'
+              );
+            }
           });
         }
         return;
@@ -237,51 +353,130 @@ export class WindowManager {
         resizeTimeout = null;
       }
       try {
-        if (!win.isDestroyed()) {
-          this.db.updateNoteBounds(note.id, win.getBounds());
-        }
+        persistNoteBounds();
       } catch {
         // Ignore
       }
 
-      // If this is the last open note window and manager is closed/not visible, the user is closing the app.
-      // Preserve is_open = 1 so the active note restores on next application launch.
-      const isManagerVisible = !!(this.managerWindow && !this.managerWindow.isDestroyed() && this.managerWindow.isVisible());
-      const isLastWindow = this.noteWindows.size <= 1 && !isManagerVisible;
-
       this.noteWindows.delete(note.id);
 
+      // When closing an individual note window (not quitting the app), mark it closed in DB.
+      // Because the app stays resident in the system tray, quitting preserves is_open = 1 for all open notes.
       if (!this.isQuitting) {
-        if (!isLastWindow) {
-          try { this.db.setNoteOpenState(note.id, false); } catch (error) {
-            console.error('Failed to save note window state:', error);
-          }
+        try {
+          this.db.setNoteOpenState(note.id, false);
+        } catch (error) {
+          logger.error('Failed to save note window state', error);
         }
         this.broadcast('notes:changed');
       }
     });
 
-    // Intercept navigation & open external links in default browser safely
-    win.webContents.on('will-navigate', (e) => e.preventDefault());
-    win.webContents.setWindowOpenHandler(({ url }) => {
-      if (url.startsWith('https://') || url.startsWith('http://') || url.startsWith('mailto:')) {
-        shell.openExternal(url);
-      }
-      return { action: 'deny' };
+    contents.on('did-start-navigation', ({ isMainFrame, isSameDocument }) => {
+      if (isMainFrame && !isSameDocument) this.detachEditor(contents);
     });
-
-    contents.on('did-start-navigation', (_event, _url, isInPlace, isMainFrame) => {
-      if (isMainFrame && !isInPlace) this.readyEditors.delete(contents);
+    contents.on('destroyed', () => this.detachEditor(contents));
+    win.once('closed', () => {
+      if (resizeTimeout) clearTimeout(resizeTimeout);
     });
-    contents.on('destroyed', () => {
-      this.readyEditors.delete(contents);
-      this.flushRequests.get(contents)?.finish(false);
-    });
+    this.watchNoteRenderer(win, note.id);
     void win.loadURL(this.rendererUrl.href).catch((error) => {
-      console.error('Failed to load note window:', error);
+      logger.error('Failed to load note window', error);
     });
 
     return win;
+  }
+
+  private detachEditor(contents: WebContents): void {
+    this.readyEditors.delete(contents);
+    this.flushRequests.get(contents)?.finish(false);
+  }
+
+  private watchNoteRenderer(win: BrowserWindow, noteId: string): void {
+    const contents = win.webContents;
+    let activePrompt: AbortController | undefined;
+    let rendererExited = false;
+
+    const dismissPrompt = () => {
+      activePrompt?.abort();
+      activePrompt = undefined;
+    };
+
+    const offerRecovery = async (exited: boolean) => {
+      if (
+        this.isQuitting ||
+        win.isDestroyed() ||
+        this.noteWindows.get(noteId) !== win ||
+        activePrompt
+      ) {
+        return;
+      }
+      const prompt = new AbortController();
+      activePrompt = prompt;
+      try {
+        const { response } = await dialog.showMessageBox(win, {
+          type: 'warning',
+          title: 'Sticky Notes',
+          message: exited ? 'This note stopped unexpectedly.' : 'This note is not responding.',
+          detail: 'Reopening restores the last saved version. Unsaved changes may be lost.',
+          buttons: ['Reopen last saved note', exited ? 'Close note' : 'Keep waiting'],
+          defaultId: exited ? 0 : 1,
+          cancelId: 1,
+          signal: prompt.signal,
+        });
+        if (
+          prompt.signal.aborted ||
+          this.isQuitting ||
+          win.isDestroyed() ||
+          this.noteWindows.get(noteId) !== win
+        ) {
+          return;
+        }
+        if (response === 0) {
+          const saved = this.db.getNoteById(noteId);
+          if (!saved) throw new Error('The saved note no longer exists.');
+          const { x, y, width, height } = win.getBounds();
+          this.createNoteWindow({ ...saved, pos_x: x, pos_y: y, width, height });
+          win.destroy();
+        } else if (exited) {
+          await this.closeNoteWindow(noteId);
+        }
+      } catch (error) {
+        if (!prompt.signal.aborted) {
+          logger.error('Could not recover note window', error);
+          dialog.showErrorBox(
+            'Note recovery failed',
+            'Check Notes Manager for the last saved version.'
+          );
+        }
+      } finally {
+        if (activePrompt === prompt) activePrompt = undefined;
+      }
+    };
+
+    const recover = () => {
+      void offerRecovery(rendererExited);
+    };
+    contents.on('unresponsive', () => {
+      if (!rendererExited) {
+        this.stalledEditors.set(contents, recover);
+        recover();
+      }
+    });
+    contents.on('responsive', () => {
+      if (!rendererExited) {
+        this.stalledEditors.delete(contents);
+        dismissPrompt();
+      }
+    });
+    contents.on('render-process-gone', () => {
+      rendererExited = true;
+      this.detachEditor(contents);
+      dismissPrompt();
+      this.stalledEditors.set(contents, recover);
+      recover();
+    });
+    win.once('closed', dismissPrompt);
   }
 
   /**
@@ -293,25 +488,44 @@ export class WindowManager {
     const win = this.noteWindows.get(id);
     if (!win || win.isDestroyed() || this.flushingAll) return Promise.resolve();
     const contents = win.webContents;
-    const closing = this.flushEditor(contents).then(() => {
-      if (!win.isDestroyed() && !this.flushingAll) {
-        this.approvedCloses.add(id);
-        try { win.close(); } finally { this.approvedCloses.delete(id); }
-      }
-    }).catch((error) => {
-      if (!contents.isDestroyed() && !this.flushingAll) contents.send('editor:resume');
-      throw error;
-    }).finally(() => this.closingNotes.delete(id));
+    const closing = this.flushEditor(contents)
+      .then(() => {
+        if (!win.isDestroyed() && !this.flushingAll) {
+          this.approvedCloses.add(id);
+          try {
+            win.close();
+          } finally {
+            this.approvedCloses.delete(id);
+          }
+        }
+      })
+      .catch((error) => {
+        if (this.readyEditors.has(contents) && !contents.isDestroyed() && !this.flushingAll) {
+          contents.send('editor:resume');
+        }
+        throw error;
+      })
+      .finally(() => this.closingNotes.delete(id));
     this.closingNotes.set(id, closing);
     return closing;
   }
 
   public rendererRole(event: IpcMainEvent | IpcMainInvokeEvent): { noteId: string | null } {
     const frame = event.senderFrame;
-    if (frame && frame === event.sender.mainFrame) {
-      const url = new URL(frame.url);
-      if (url.protocol === this.rendererUrl.protocol && url.host === this.rendererUrl.host &&
-          url.pathname === this.rendererUrl.pathname && url.username === '' && url.password === '') {
+    if (frame && frame === event.sender.mainFrame && frame.url) {
+      let url: URL;
+      try {
+        url = new URL(frame.url);
+      } catch {
+        throw new Error('Unrecognized renderer.');
+      }
+      if (
+        url.protocol === this.rendererUrl.protocol &&
+        url.host === this.rendererUrl.host &&
+        url.pathname === this.rendererUrl.pathname &&
+        url.username === '' &&
+        url.password === ''
+      ) {
         if (this.managerWindow?.webContents === event.sender) return { noteId: null };
         for (const [noteId, win] of this.noteWindows) {
           if (win.webContents === event.sender) return { noteId };
@@ -323,6 +537,10 @@ export class WindowManager {
 
   public markEditorReady(contents: WebContents): void {
     this.readyEditors.add(contents);
+  }
+
+  public markEditorUnready(contents: WebContents): void {
+    this.detachEditor(contents);
   }
 
   public acknowledgeEditorFlush(contents: WebContents, id: number, saved: boolean): void {
@@ -344,7 +562,10 @@ export class WindowManager {
         if (saved) resolve();
         else reject(new Error('The note did not acknowledge its save.'));
       };
-      const timeout = setTimeout(() => finish(false), 5000);
+      const timeout = setTimeout(() => {
+        finish(false);
+        this.stalledEditors.get(contents)?.();
+      }, 5000);
     });
     this.flushRequests.set(contents, { id, finish, promise });
     try {
@@ -373,7 +594,7 @@ export class WindowManager {
   }
 
   /**
-   * Deletes a note and destroys its window
+   * Soft-deletes a note to Trash and destroys its window (tray remains active).
    */
   public deleteNote(id: string): void {
     if (this.flushingAll) throw new Error('Sticky Notes is closing.');
@@ -384,6 +605,91 @@ export class WindowManager {
     }
     this.noteWindows.delete(id);
     this.broadcast('notes:changed');
+  }
+
+  public restoreNote(id: string): void {
+    if (this.flushingAll) throw new Error('Sticky Notes is closing.');
+    if (!this.db.restoreNote(id)) {
+      throw new Error('Deleted note no longer exists.');
+    }
+    this.broadcast('notes:changed');
+  }
+
+  public permanentlyDeleteNote(id: string): void {
+    if (this.flushingAll) throw new Error('Sticky Notes is closing.');
+    this.db.permanentlyDeleteNote(id);
+    const win = this.noteWindows.get(id);
+    if (win && !win.isDestroyed()) {
+      win.destroy();
+    }
+    this.noteWindows.delete(id);
+    this.broadcast('notes:changed');
+  }
+
+  public emptyTrash(): void {
+    if (this.flushingAll) throw new Error('Sticky Notes is closing.');
+    this.db.emptyTrash();
+    this.broadcast('notes:changed');
+  }
+
+  /**
+   * Export all active notes as JSON or Markdown via native save dialog.
+   */
+  public async exportNotes(format: 'json' | 'markdown'): Promise<ExportResult> {
+    const notes = this.db.getAllNotes();
+    const dateStamp = new Date().toISOString().slice(0, 10);
+    const ext = format === 'json' ? 'json' : 'md';
+    const filters =
+      format === 'json'
+        ? [{ name: 'JSON Backup', extensions: ['json'] }]
+        : [{ name: 'Markdown Document', extensions: ['md'] }];
+
+    const parent = this.managerWindow && !this.managerWindow.isDestroyed() ? this.managerWindow : undefined;
+    const dialogOptions = {
+      title: 'Export Sticky Notes',
+      defaultPath: path.join(app.getPath('documents'), `sticky-notes-${dateStamp}.${ext}`),
+      filters,
+    };
+    const { canceled, filePath } = parent
+      ? await dialog.showSaveDialog(parent, dialogOptions)
+      : await dialog.showSaveDialog(dialogOptions);
+
+    if (canceled || !filePath) {
+      return { exported: false, count: 0 };
+    }
+
+    let payload: string;
+    if (format === 'json') {
+      payload = JSON.stringify(
+        {
+          exportedAt: new Date().toISOString(),
+          version: app.getVersion(),
+          notes: notes.map((n) => ({
+            id: n.id,
+            title: n.title,
+            color: n.color,
+            is_pinned: Boolean(n.is_pinned),
+            created_at: n.created_at,
+            updated_at: n.updated_at,
+            content_plain: n.content_plain,
+            content_html: n.content_html,
+          })),
+        },
+        null,
+        2
+      );
+    } else {
+      payload = notes
+        .map((n) => {
+          const heading = n.title || 'Untitled Note';
+          const updated = new Date(n.updated_at).toISOString();
+          return `# ${heading}\n\n_Color: ${n.color} | Updated: ${updated}_\n\n${n.content_plain}\n`;
+        })
+        .join('\n---\n\n');
+    }
+
+    fs.writeFileSync(filePath, payload, { encoding: 'utf8', mode: 0o600 });
+    return { exported: true, count: notes.length, filePath };
   }
 
   /**
@@ -399,6 +705,17 @@ export class WindowManager {
     return isPinned;
   }
 
+  private resolveManagerBackgroundColor(): string {
+    try {
+      const theme = this.db.getAllSettings().theme;
+      const isDark =
+        theme === 'dark' || (theme === 'system' && nativeTheme.shouldUseDarkColors);
+      return isDark ? '#202020' : '#F3F3F3';
+    } catch {
+      return nativeTheme.shouldUseDarkColors ? '#202020' : '#F3F3F3';
+    }
+  }
+
   /**
    * Shows or creates the central Notes Manager window
    */
@@ -410,16 +727,26 @@ export class WindowManager {
       return;
     }
 
-    this.managerWindow = new BrowserWindow({
-      width: 400,
-      height: 640,
+    const savedBounds: WindowBounds | null = this.db.getManagerBounds();
+    let x = savedBounds?.x;
+    let y = savedBounds?.y;
+    if (x !== undefined && y !== undefined && !isPositionVisible(x, y)) {
+      x = undefined;
+      y = undefined;
+    }
+
+    const managerWin = new BrowserWindow({
+      width: savedBounds?.width ?? 400,
+      height: savedBounds?.height ?? 640,
       minWidth: 340,
       minHeight: 450,
+      x,
+      y,
       frame: false,
       maximizable: false,
       title: 'Sticky Notes',
       icon: this.iconImage || this.iconPath,
-      backgroundColor: '#202020',
+      backgroundColor: this.resolveManagerBackgroundColor(),
       webPreferences: {
         preload: this.preloadPath,
         contextIsolation: true,
@@ -430,25 +757,54 @@ export class WindowManager {
         additionalArguments: ['--window-type=manager'],
       },
     });
+    this.managerWindow = managerWin;
 
     if (this.iconImage) {
-      try { this.managerWindow.setIcon(this.iconImage); } catch { /* ignore */ }
+      try {
+        managerWin.setIcon(this.iconImage);
+      } catch {
+        // Ignore
+      }
     }
 
-    this.managerWindow.on('closed', () => {
+    attachContextMenu(managerWin);
+
+    let managerBoundsTimer: NodeJS.Timeout | null = null;
+    const persistManagerBounds = () => {
+      if (managerWin.isDestroyed()) return;
+      if (managerBoundsTimer) clearTimeout(managerBoundsTimer);
+      managerBoundsTimer = setTimeout(() => {
+        if (managerWin.isDestroyed()) return;
+        try {
+          this.db.setManagerBounds(managerWin.getBounds());
+        } catch (error) {
+          logger.error('Failed to save manager window bounds', error);
+        }
+      }, 300);
+    };
+
+    managerWin.on('move', persistManagerBounds);
+    managerWin.on('resize', persistManagerBounds);
+    managerWin.on('close', () => {
+      if (managerBoundsTimer) {
+        clearTimeout(managerBoundsTimer);
+        managerBoundsTimer = null;
+      }
+      if (!managerWin.isDestroyed()) {
+        try {
+          this.db.setManagerBounds(managerWin.getBounds());
+        } catch {
+          // Ignore
+        }
+      }
+    });
+    managerWin.on('closed', () => {
+      if (managerBoundsTimer) clearTimeout(managerBoundsTimer);
       this.managerWindow = null;
     });
 
-    this.managerWindow.webContents.on('will-navigate', (e) => e.preventDefault());
-    this.managerWindow.webContents.setWindowOpenHandler(({ url }) => {
-      if (url.startsWith('https://') || url.startsWith('http://')) {
-        shell.openExternal(url);
-      }
-      return { action: 'deny' };
-    });
-
-    void this.managerWindow.loadURL(this.rendererUrl.href).catch((error) => {
-      console.error('Failed to load notes list:', error);
+    void managerWin.loadURL(this.rendererUrl.href).catch((error) => {
+      logger.error('Failed to load notes list', error);
     });
   }
 
@@ -468,6 +824,10 @@ export class WindowManager {
   }
 
   public showAllOpenNotes(): void {
+    if (this.noteWindows.size === 0) {
+      this.restoreOpenNotes();
+      return;
+    }
     for (const win of this.noteWindows.values()) {
       if (!win.isDestroyed()) {
         if (win.isMinimized()) win.restore();
@@ -484,9 +844,6 @@ export class WindowManager {
     }
   }
 
-  /**
-   * Sets whether the entire application is in the process of shutting down
-   */
   public isClosing(): boolean {
     return this.flushingAll;
   }
@@ -495,45 +852,73 @@ export class WindowManager {
     this.isQuitting = quitting;
   }
 
-  /**
-   * Synchronously persists bounds for all currently open note windows
-   */
   public flushAllOpenNoteBounds(): void {
     for (const [id, win] of this.noteWindows.entries()) {
       if (!win.isDestroyed()) {
         try {
-          this.db.updateNoteBounds(id, win.getBounds());
+          const bounds = win.getBounds();
+          if (this.isNativeWayland && bounds.x === 0 && bounds.y === 0) {
+            const existing = this.db.getNoteById(id);
+            if (existing && existing.pos_x !== null && existing.pos_y !== null) {
+              bounds.x = existing.pos_x;
+              bounds.y = existing.pos_y;
+            }
+          }
+          this.db.updateNoteBounds(id, bounds);
         } catch {
           // Ignore
         }
       }
     }
+    if (this.managerWindow && !this.managerWindow.isDestroyed()) {
+      try {
+        this.db.setManagerBounds(this.managerWindow.getBounds());
+      } catch {
+        // Ignore
+      }
+    }
   }
 
-  private broadcastTimers: Map<string, NodeJS.Timeout> = new Map();
+  public dispose(): void {
+    for (const timer of this.broadcastTimers.values()) {
+      clearTimeout(timer);
+    }
+    this.broadcastTimers.clear();
+    for (const timer of this.restoreTimers) {
+      clearTimeout(timer);
+    }
+    this.restoreTimers.clear();
+  }
 
   /**
-   * Broadcast an event to all open renderer windows (throttled for rapid change events)
+   * Broadcast an event to renderer windows (throttled for rapid notes:changed events).
    */
-  public broadcast(channel: string, ...args: any[]): void {
+  public broadcast(channel: string, ...args: unknown[]): void {
     if (channel === 'notes:changed') {
       const existing = this.broadcastTimers.get(channel);
       if (existing) clearTimeout(existing);
 
       const timer = setTimeout(() => {
         this.broadcastTimers.delete(channel);
-        this.emitBroadcast(channel, ...args);
+        this.emitBroadcast(channel, false, ...args);
       }, 50);
       this.broadcastTimers.set(channel, timer);
       return;
     }
 
-    this.emitBroadcast(channel, ...args);
+    this.emitBroadcast(channel, true, ...args);
   }
 
-  private emitBroadcast(channel: string, ...args: any[]): void {
+  private emitBroadcast(channel: string, includeNoteWindows: boolean, ...args: unknown[]): void {
     if (this.managerWindow && !this.managerWindow.isDestroyed()) {
       this.managerWindow.webContents.send(channel, ...args);
+    }
+    if (includeNoteWindows) {
+      for (const win of this.noteWindows.values()) {
+        if (!win.isDestroyed()) {
+          win.webContents.send(channel, ...args);
+        }
+      }
     }
   }
 }

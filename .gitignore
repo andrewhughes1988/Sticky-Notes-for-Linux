@@ -73,6 +73,8 @@ crashpad/
 coverage/
 .nyc_output/
 *.lcov
+test-results/
+playwright-report/
 
 # ==============================================================================
 # Operating System & Editor Metadata

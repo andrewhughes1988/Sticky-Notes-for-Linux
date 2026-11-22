@@ -31,44 +31,14 @@ export class ErrorBoundary extends Component<Props, State> {
   public render(): ReactNode {
     if (this.state.hasError) {
       return (
-        <div style={{
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'center',
-          justifyContent: 'center',
-          height: '100vh',
-          padding: '24px',
-          backgroundColor: '#202020',
-          color: '#F5F5F5',
-          textAlign: 'center',
-          boxSizing: 'border-box',
-          userSelect: 'none',
-        }}>
-          <AlertTriangle size={36} color="#F59E0B" style={{ marginBottom: '12px' }} />
-          <h2 style={{ fontSize: '16px', fontWeight: 600, margin: '0 0 8px 0' }}>
-            Something went wrong
-          </h2>
-          <p style={{ fontSize: '12px', color: '#A0A0A0', margin: '0 0 16px 0', maxWidth: '280px', lineHeight: 1.4 }}>
+        <div className="error-boundary" role="alert">
+          <AlertTriangle size={36} color="#F59E0B" aria-hidden="true" />
+          <h2 className="error-boundary-title">Something went wrong</h2>
+          <p className="error-boundary-body">
             An unexpected error occurred while rendering this window.
           </p>
-          <button
-            type="button"
-            onClick={this.handleReload}
-            style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: '6px',
-              padding: '6px 14px',
-              fontSize: '12px',
-              fontWeight: 500,
-              color: '#FFFFFF',
-              backgroundColor: '#3B82F6',
-              border: 'none',
-              borderRadius: '4px',
-              cursor: 'pointer',
-            }}
-          >
-            <RotateCcw size={13} />
+          <button type="button" className="error-boundary-btn" onClick={this.handleReload}>
+            <RotateCcw size={13} aria-hidden="true" />
             Reload Window
           </button>
         </div>

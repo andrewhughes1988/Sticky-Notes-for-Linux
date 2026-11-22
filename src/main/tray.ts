@@ -109,18 +109,10 @@ export class TrayService {
   }
 
   private createFallbackIcon(): Electron.NativeImage {
-    // Fallback vector icon if no png file exists on disk
-    const svgString = `
-      <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 22 22">
-        <rect x="2" y="2" width="18" height="18" rx="3" fill="#FFD600" />
-        <path d="M14 20 L20 14 L14 14 Z" fill="#E6B800" opacity="0.9" />
-        <line x1="5" y1="6" x2="17" y2="6" stroke="#5D4037" stroke-width="1.5" stroke-linecap="round" />
-        <line x1="5" y1="10" x2="14" y2="10" stroke="#5D4037" stroke-width="1.5" stroke-linecap="round" />
-        <line x1="5" y1="14" x2="11" y2="14" stroke="#5D4037" stroke-width="1.5" stroke-linecap="round" />
-      </svg>
-    `;
-    const base64 = Buffer.from(svgString).toString('base64');
-    return nativeImage.createFromDataURL(`data:image/svg+xml;base64,${base64}`).resize({ width: 22, height: 22 });
+    // Electron's nativeImage decodes PNG/JPEG (not SVG). Provide a valid 16x16 yellow sticky-note PNG fallback.
+    const fallbackPngBase64 =
+      'iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAIklEQVR42mP8z8DwnwEIwDiqYVQDDQYwkKqBwQDGUSMGAD03B/1f8m+qAAAAAElFTkSuQmCC';
+    return nativeImage.createFromDataURL(`data:image/png;base64,${fallbackPngBase64}`);
   }
 
   public destroy(): void {

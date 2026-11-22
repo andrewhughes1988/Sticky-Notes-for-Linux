@@ -5,6 +5,7 @@ import { PinIcon } from './PinIcon';
 interface NoteHeaderProps {
   isMenuOpen: boolean;
   isPinned: boolean;
+  menuButtonRef: React.RefObject<HTMLButtonElement>;
   onNewNote: () => void;
   onTogglePin: () => void;
   onToggleMenu: () => void;
@@ -14,6 +15,7 @@ interface NoteHeaderProps {
 const NoteHeaderComponent: React.FC<NoteHeaderProps> = ({
   isMenuOpen,
   isPinned,
+  menuButtonRef,
   onNewNote,
   onTogglePin,
   onToggleMenu,
@@ -26,10 +28,11 @@ const NoteHeaderComponent: React.FC<NoteHeaderProps> = ({
         <button
           type="button"
           className="header-btn"
+          aria-label="New note"
           title="New note (Ctrl+N)"
           onClick={onNewNote}
         >
-          <Plus size={16} />
+          <Plus size={16} aria-hidden="true" />
         </button>
       </div>
 
@@ -41,6 +44,7 @@ const NoteHeaderComponent: React.FC<NoteHeaderProps> = ({
         <button
           type="button"
           className={`header-btn ${isPinned ? 'active' : ''}`}
+          aria-label={isPinned ? 'Unpin from top' : 'Pin always on top'}
           title={isPinned ? 'Unpin from top' : 'Always on top'}
           style={{ opacity: isPinned ? 1 : 0.7 }}
           aria-pressed={isPinned}
@@ -50,23 +54,26 @@ const NoteHeaderComponent: React.FC<NoteHeaderProps> = ({
         </button>
 
         <button
+          ref={menuButtonRef}
           type="button"
           className="header-btn"
+          aria-label="Note options"
           aria-expanded={isMenuOpen}
           aria-haspopup="dialog"
           title="Menu"
           onClick={onToggleMenu}
         >
-          <MoreHorizontal size={16} />
+          <MoreHorizontal size={16} aria-hidden="true" />
         </button>
 
         <button
           type="button"
           className="header-btn close-btn"
+          aria-label="Close note"
           title="Close note"
           onClick={onCloseNote}
         >
-          <X size={16} />
+          <X size={16} aria-hidden="true" />
         </button>
       </div>
     </div>

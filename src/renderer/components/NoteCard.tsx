@@ -2,6 +2,7 @@ import React from 'react';
 import { NotePreview, NOTE_COLORS } from '../../shared/types';
 import { formatFriendlyDate } from '../utils/date';
 import { Trash2 } from 'lucide-react';
+import { PinIcon } from './PinIcon';
 
 interface NoteCardProps {
   note: NotePreview;
@@ -10,9 +11,7 @@ interface NoteCardProps {
 }
 
 const NoteCardComponent: React.FC<NoteCardProps> = ({ note, onOpen, onDelete }) => {
-  const themeDef = NOTE_COLORS[note.color] || NOTE_COLORS.yellow;
-  const isDark = note.color === 'charcoal';
-  const theme = isDark ? themeDef.dark : themeDef.light;
+  const theme = NOTE_COLORS[note.color] || NOTE_COLORS.yellow;
   const previewText = note.preview.trim() || 'Empty note';
   const label = previewText.length > 80 ? `${previewText.slice(0, 80)}…` : previewText;
   const date = formatFriendlyDate(note.updated_at);
@@ -20,7 +19,7 @@ const NoteCardComponent: React.FC<NoteCardProps> = ({ note, onOpen, onDelete }) 
 
   return (
     <article
-      className={`note-card ${isDark ? 'dark' : ''}`}
+      className={`note-card ${theme.isDark ? 'dark' : ''}`}
       style={{
         backgroundColor: theme.body,
         color: theme.text,
@@ -31,14 +30,20 @@ const NoteCardComponent: React.FC<NoteCardProps> = ({ note, onOpen, onDelete }) 
       <button
         type="button"
         className="note-card-open"
-        aria-label={`Open note: ${label}`}
-        aria-description={`${status}. Updated ${date}.`}
+        aria-label={`Open note: ${label} (${status}${note.is_pinned ? ', pinned' : ''}, updated ${date})`}
         onClick={() => onOpen(note.id)}
       >
         <span className="note-card-header">
           <span className="note-card-date">{date}</span>
-          <span className={`note-card-badge ${note.is_open ? 'badge-open' : 'badge-closed'}`}>
-            {status}
+          <span className="note-card-meta">
+            {Boolean(note.is_pinned) && (
+              <span className="note-card-pin" title="Pinned always on top" aria-hidden="true">
+                <PinIcon isPinned={true} size={12} />
+              </span>
+            )}
+            <span className={`note-card-badge ${note.is_open ? 'badge-open' : 'badge-closed'}`}>
+              {status}
+            </span>
           </span>
         </span>
         <span className="note-card-preview">{previewText}</span>
@@ -46,11 +51,11 @@ const NoteCardComponent: React.FC<NoteCardProps> = ({ note, onOpen, onDelete }) 
       <button
         type="button"
         className="card-delete-icon-btn app-no-drag"
-        title="Delete note"
-        aria-label={`Delete note: ${label}`}
+        title="Move note to Trash"
+        aria-label={`Move note to Trash: ${label}`}
         onClick={() => onDelete(note.id)}
       >
-        <Trash2 size={16} />
+        <Trash2 size={16} aria-hidden="true" />
       </button>
     </article>
   );

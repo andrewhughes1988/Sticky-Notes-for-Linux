@@ -1,6 +1,6 @@
 const { app, BrowserWindow } = require('electron');
-const fs = require('fs');
-const path = require('path');
+const fs = require('node:fs');
+const path = require('node:path');
 
 app.whenReady().then(async () => {
   const svgPath = path.join(process.cwd(), 'public', 'icon.svg');
@@ -14,22 +14,25 @@ app.whenReady().then(async () => {
     fs.mkdirSync(iconsDir, { recursive: true });
   }
 
-  // Create a hidden offscreen window to render the SVG perfectly at each resolution
   const win = new BrowserWindow({
     width: 1024,
     height: 1024,
     show: false,
+    transparent: true,
     webPreferences: {
       offscreen: true,
-      transparent: true,
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
     },
   });
 
   for (const s of sizes) {
     win.setSize(s, s);
     await win.loadURL(dataUrl);
-    // Give Skia a moment to paint the SVG
-    await new Promise((r) => setTimeout(r, 100));
+    await win.webContents.executeJavaScript(
+      'new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))'
+    );
     const image = await win.webContents.capturePage({ x: 0, y: 0, width: s, height: s });
     const pngBuffer = image.toPNG();
 
@@ -40,7 +43,7 @@ app.whenReady().then(async () => {
     if (s === 512) {
       fs.writeFileSync(path.join(process.cwd(), 'build', 'icon.png'), pngBuffer);
       fs.writeFileSync(path.join(process.cwd(), 'public', 'icon.png'), pngBuffer);
-      console.log(`Updated build/icon.png and public/icon.png with 512x512 render`);
+      console.log('Updated build/icon.png and public/icon.png with 512x512 render');
     }
   }
 

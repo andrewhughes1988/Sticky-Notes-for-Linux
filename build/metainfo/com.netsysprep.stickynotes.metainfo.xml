@@ -7,7 +7,7 @@
   <summary>Pixel-faithful Windows Sticky Notes app for Linux</summary>
   <description>
     <p>
-      A Sticky Notes app for Linux with local SQLite database and cloud sync readiness. Create colorful notes, pin them to your desktop, and search through all your notes from the Notes Manager.
+      An offline-first Sticky Notes app for Linux backed by a local SQLite database. Create colorful notes, pin them to your desktop, and search through all your notes from the Notes Manager.
     </p>
     <p>Features:</p>
     <ul>
@@ -16,7 +16,7 @@
       <li>Checklists and bulleted lists</li>
       <li>Always-on-top pinning</li>
       <li>Full-text search across all notes</li>
-      <li>Offline-first with local SQLite database</li>
+      <li>Offline-first with local SQLite database and Trash recovery</li>
     </ul>
   </description>
   <developer id="com.netsysprep">
@@ -31,6 +31,16 @@
   <icon type="stock">com.netsysprep.stickynotes</icon>
   <content_rating type="oars-1.1" />
   <releases>
+    <release version="1.2.0" date="2026-11-21">
+      <description>
+        <p>Migrates the rich text editor to Tiptap/ProseMirror, hardens Electron security (Fuses, main-process HTML sanitization, permission denials), adds persistent system tray lifecycle, soft-delete Trash recovery, export/backup, and full keyboard accessibility.</p>
+      </description>
+    </release>
+    <release version="1.1.1" date="2026-11-21">
+      <description>
+        <p>Improves note search and autosave, and creates a recovery copy before upgrading an existing notes database.</p>
+      </description>
+    </release>
     <release version="1.1.0" date="2026-11-21">
       <description>
         <p>Security and performance improvements, plus support for checking or unchecking multiple selected checklist items at once.</p>

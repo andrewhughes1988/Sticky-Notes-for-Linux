@@ -1,0 +1,16 @@
+{
+  "extends": "./tsconfig.node.json",
+  "compilerOptions": {
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "noEmit": true
+  },
+  "include": [
+    "tests",
+    "e2e",
+    "playwright.config.ts",
+    "src/main",
+    "src/preload",
+    "src/renderer/utils",
+    "src/shared"
+  ]
+}
