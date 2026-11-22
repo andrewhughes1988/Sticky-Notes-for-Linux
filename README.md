@@ -63,6 +63,12 @@ The built packages will be placed in the `release/` directory:
 - `sticky-notes-linux_1.0.0_amd64.deb`
 - `Sticky Notes-1.0.0.AppImage`
 
+## Local data and recovery
+
+Sticky Notes stores its database at `${XDG_DATA_HOME:-$HOME/.local/share}/sticky-notes/stickynotes.db`. If the app reports a database error, close any other instance and check that the directory is writable and has free space. Before attempting repairs, close the app and copy the entire `sticky-notes` directory to a safe location, including any `-wal` and `-shm` files alongside the database. The app reports startup errors without resetting your notes.
+
+Deleting a note removes it from the app’s database and offers no undo. Separate backups and filesystem snapshots can still contain copies.
+
 ---
 
 ## 📄 License

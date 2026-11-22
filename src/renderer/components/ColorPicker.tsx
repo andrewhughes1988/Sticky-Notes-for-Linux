@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useLayoutEffect, useRef } from 'react';
 import { NoteColor, NOTE_COLORS } from '../../shared/types';
 import { List, Trash2 } from 'lucide-react';
 
@@ -8,7 +8,10 @@ interface ColorPickerProps {
   onOpenManager: () => void;
   onDeleteNote: () => void;
   onClose: () => void;
+  triggerRef?: React.RefObject<HTMLButtonElement>;
 }
+
+const colors = Object.keys(NOTE_COLORS) as NoteColor[];
 
 const ColorPickerComponent: React.FC<ColorPickerProps> = ({
   currentColor,
@@ -16,35 +19,56 @@ const ColorPickerComponent: React.FC<ColorPickerProps> = ({
   onOpenManager,
   onDeleteNote,
   onClose,
+  triggerRef,
 }) => {
-  const colors: NoteColor[] = ['yellow', 'green', 'pink', 'purple', 'blue', 'charcoal', 'white'];
+  const popoverRef = useRef<HTMLDivElement>(null);
+
+  useLayoutEffect(() => {
+    const trigger = triggerRef?.current ?? document.activeElement;
+    const popover = popoverRef.current;
+    popover?.querySelector<HTMLButtonElement>('[aria-pressed="true"]')?.focus();
+
+    return () => {
+      if (
+        trigger instanceof HTMLElement && trigger.isConnected
+        && (popover?.contains(document.activeElement) || document.activeElement === document.body)
+      ) trigger.focus();
+    };
+  }, [triggerRef]);
 
   return (
     <>
-      {/* Backdrop to close when clicking outside */}
-      <div
-        style={{
-          position: 'fixed',
-          top: 0,
-          left: 0,
-          right: 0,
-          bottom: 0,
-          zIndex: 90,
-        }}
-        onClick={onClose}
-      />
+      <div className="color-menu-backdrop app-no-drag" aria-hidden="true" onClick={onClose} />
 
-      <div className="color-menu-popover app-no-drag">
-        {/* Color Palette Row */}
-        <div className="color-palette-grid">
+      <div
+        ref={popoverRef}
+        className="color-menu-popover app-no-drag"
+        role="dialog"
+        aria-label="Note options"
+        onBlur={(event) => {
+          const next = event.relatedTarget;
+          if (next && next !== triggerRef?.current && !event.currentTarget.contains(next)) onClose();
+        }}
+        onKeyDown={(event) => {
+          if (event.key === 'Escape') {
+            event.preventDefault();
+            event.stopPropagation();
+            onClose();
+          }
+        }}
+      >
+        <div className="color-palette-grid" role="group" aria-label="Note colors">
           {colors.map((colorKey) => {
             const def = NOTE_COLORS[colorKey];
             const isSelected = colorKey === currentColor;
             return (
-              <div
+              <button
                 key={colorKey}
+                type="button"
                 className={`color-swatch ${isSelected ? 'active' : ''}`}
                 style={{ backgroundColor: def.dotColor }}
+                aria-label={def.name}
+                aria-pressed={isSelected}
                 title={def.name}
                 onClick={() => {
                   onSelectColor(colorKey);
@@ -57,26 +81,18 @@ const ColorPickerComponent: React.FC<ColorPickerProps> = ({
 
         <div className="color-menu-divider" />
 
-        {/* Notes list link */}
-        <button
-          className="color-menu-item"
-          onClick={() => {
-            onOpenManager();
-            onClose();
-          }}
-        >
+        <button type="button" className="color-menu-item" onClick={() => {
+          onOpenManager();
+          onClose();
+        }}>
           <List size={16} />
           <span>Notes list</span>
         </button>
 
-        {/* Delete note */}
-        <button
-          className="color-menu-item delete-item"
-          onClick={() => {
-            onDeleteNote();
-            onClose();
-          }}
-        >
+        <button type="button" className="color-menu-item delete-item" onClick={() => {
+          onDeleteNote();
+          onClose();
+        }}>
           <Trash2 size={16} />
           <span>Delete note</span>
         </button>

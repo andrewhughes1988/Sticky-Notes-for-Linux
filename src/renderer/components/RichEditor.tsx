@@ -1,4 +1,5 @@
 import React, { useRef, useEffect, useState, useCallback } from 'react';
+import { Autosave } from '../utils/autosave';
 import { sanitizeHtml } from '../utils/sanitize';
 
 export type FormatKey = 'bold' | 'italic' | 'underline' | 'strike';
@@ -13,7 +14,7 @@ export interface FormatState {
 interface RichEditorProps {
   initialHtml: string;
   placeholder?: string;
-  onChange: (html: string, plainText: string) => void;
+  onChange: (html: string, plainText: string) => Promise<void>;
   onFormatChange?: (formats: {
     bold: boolean;
     italic: boolean;
@@ -25,7 +26,7 @@ interface RichEditorProps {
   editorRefExpose?: (api: {
     format: (command: string, value?: string) => void;
     insertChecklist: () => void;
-    flush: () => void;
+    flush: () => Promise<void>;
   }) => void;
 }
 
@@ -37,9 +38,11 @@ export const RichEditor: React.FC<RichEditorProps> = ({
   editorRefExpose,
 }) => {
   const editorRef = useRef<HTMLDivElement>(null);
-  const [isComposing, setIsComposing] = useState(false);
+  const composing = useRef(false);
+  const [saveError, setSaveError] = useState('');
+  const initialContent = useRef(initialHtml);
   const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
-  const isDirtyRef = useRef(false);
+  const autosave = useRef(new Autosave());
 
   // State for pending styling on a collapsed caret
   const pendingFormatsRef = useRef<FormatState | null>(null);
@@ -63,17 +66,27 @@ export const RichEditor: React.FC<RichEditorProps> = ({
   };
 
   // Immediate save flush for pending dirty edits
-  const flush = useCallback(() => {
-    if (!isDirtyRef.current || !editorRef.current) return;
-    if (debounceTimerRef.current) {
-      clearTimeout(debounceTimerRef.current);
-      debounceTimerRef.current = null;
+  const flush = useCallback(async () => {
+    if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
+    if (composing.current) {
+      const message = 'Finish composing text before closing this note.';
+      setSaveError(message);
+      throw new Error(message);
     }
-    isDirtyRef.current = false;
-    const html = editorRef.current.innerHTML;
-    const plain = extractPlainText(editorRef.current);
-    onChange(html, plain);
+    try {
+      await autosave.current.flush(async () => {
+        const editor = editorRef.current;
+        if (!editor) throw new Error('Editor is unavailable');
+        await onChange(editor.innerHTML, extractPlainText(editor));
+      });
+      setSaveError('');
+    } catch (error) {
+      setSaveError('Changes could not be saved.');
+      throw error;
+    }
   }, [onChange]);
+
+  const autosaveNow = useCallback(() => { void flush().catch(() => {}); }, [flush]);
 
   // Helper to find parent checklist item
   const getParentChecklistItem = (node: Node | null): HTMLElement | null => {
@@ -523,21 +536,11 @@ export const RichEditor: React.FC<RichEditorProps> = ({
   }, [onFormatChange]);
 
   const handleContentChange = useCallback(() => {
-    if (!editorRef.current || isComposing) return;
-    isDirtyRef.current = true;
-
-    if (debounceTimerRef.current) {
-      clearTimeout(debounceTimerRef.current);
-    }
-
-    debounceTimerRef.current = setTimeout(() => {
-      if (!editorRef.current) return;
-      isDirtyRef.current = false;
-      const html = editorRef.current.innerHTML;
-      const plain = extractPlainText(editorRef.current);
-      onChange(html, plain);
-    }, 300);
-  }, [isComposing, onChange]);
+    if (!editorRef.current || composing.current) return;
+    autosave.current.edited();
+    if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
+    debounceTimerRef.current = setTimeout(autosaveNow, 300);
+  }, [autosaveNow]);
 
   // Undo last action on the note body
   const undo = useCallback(() => {
@@ -793,28 +796,16 @@ export const RichEditor: React.FC<RichEditorProps> = ({
     }
   }, [editorRefExpose, format, toggleChecklist, flush]);
 
-  // Flush pending changes before page unloads or component unmounts
   useEffect(() => {
-    const handleBeforeUnload = () => {
-      flush();
-    };
-    window.addEventListener('beforeunload', handleBeforeUnload);
-    return () => {
-      window.removeEventListener('beforeunload', handleBeforeUnload);
-      flush();
-    };
-  }, [flush]);
-
-  // Initial HTML mount and dynamic updates
-  useEffect(() => {
-    if (editorRef.current && initialHtml !== undefined) {
-      const sanitized = sanitizeHtml(initialHtml);
-      if (editorRef.current.innerHTML !== sanitized) {
-        editorRef.current.innerHTML = sanitized;
-      }
+    if (editorRef.current) {
+      editorRef.current.innerHTML = sanitizeHtml(initialContent.current);
       pushHistory({ force: true });
     }
-  }, [initialHtml, pushHistory]);
+    return () => {
+      if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
+      if (historyDebounceTimerRef.current) clearTimeout(historyDebounceTimerRef.current);
+    };
+  }, [pushHistory]);
 
   // Keyboard listener for shortcuts and checklist enter/backspace handling
   const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
@@ -1181,7 +1172,7 @@ export const RichEditor: React.FC<RichEditorProps> = ({
     checkFormats();
   };
   const handleInput = () => {
-    if (isComposing) return;
+    if (composing.current) return;
     handleContentChange();
     checkFormats();
 
@@ -1199,7 +1190,7 @@ export const RichEditor: React.FC<RichEditorProps> = ({
       historyDebounceTimerRef.current = null;
     }
     pushHistory();
-    flush();
+    autosaveNow();
   };
 
   return (
@@ -1207,6 +1198,9 @@ export const RichEditor: React.FC<RichEditorProps> = ({
       <div
         ref={editorRef}
         className="note-editor-content"
+        role="textbox"
+        aria-multiline="true"
+        aria-label="Note text"
         contentEditable={true}
         suppressContentEditableWarning={true}
         spellCheck={false}
@@ -1221,12 +1215,20 @@ export const RichEditor: React.FC<RichEditorProps> = ({
         onMouseUp={handleSelectionReset}
         onKeyDown={handleKeyDown}
         onClick={handleClick}
-        onCompositionStart={() => setIsComposing(true)}
+        onCompositionStart={() => {
+          composing.current = true;
+          if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
+        }}
         onCompositionEnd={() => {
-          setIsComposing(false);
+          composing.current = false;
           handleInput();
         }}
       />
+      {saveError && (
+        <div role="alert" className="app-no-drag">
+          {saveError} <button type="button" onClick={autosaveNow}>Retry save</button>
+        </div>
+      )}
     </div>
   );
 };

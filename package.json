@@ -9,7 +9,7 @@
     "start": "npm run build && electron .",
     "rebuild": "electron-builder install-app-deps",
     "postinstall": "electron-builder install-app-deps",
-    "test": "ELECTRON_RUN_AS_NODE=1 electron --import tsx tests/database.test.ts",
+    "test": "ELECTRON_RUN_AS_NODE=1 electron --import tsx --test tests/*.test.ts",
     "pack": "npm run build && electron-builder --dir",
     "dist": "npm run build && electron-builder"
   },
@@ -28,7 +28,7 @@
   "license": "MIT",
   "dependencies": {
     "better-sqlite3": "^11.8.1",
-    "dompurify": "^3.2.4",
+    "dompurify": "^3.4.18",
     "lucide-react": "^0.475.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"

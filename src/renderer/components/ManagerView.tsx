@@ -1,19 +1,32 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
-import { Note } from '../../shared/types';
+import { NotePreview } from '../../shared/types';
 import { NoteCard } from './NoteCard';
 import { DeleteModal } from './DeleteModal';
 import { StickyNoteIcon } from './StickyNoteIcon';
 import { Plus, Search, X, Sun, Moon } from 'lucide-react';
 
-export const ManagerView: React.FC = () => {
-  const [notes, setNotes] = useState<Note[]>([]);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [noteToDelete, setNoteToDelete] = useState<string | null>(null);
-  const searchQueryRef = useRef(searchQuery);
-  searchQueryRef.current = searchQuery;
-  const lastQueryIdRef = useRef(0);
+const PAGE_SIZE = 40;
 
-  // Initialize theme from localStorage, or fallback to desktop system default
+export const ManagerView: React.FC = () => {
+  const [notes, setNotes] = useState<NotePreview[]>([]);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [page, setPage] = useState(0);
+  const [hasMore, setHasMore] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [noteToDelete, setNoteToDelete] = useState<string | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [autostart, setAutostart] = useState<boolean | null>(null);
+  const [isUpdatingAutostart, setIsUpdatingAutostart] = useState(false);
+  const [autostartError, setAutostartError] = useState<string | null>(null);
+  const [settingsRetry, setSettingsRetry] = useState(0);
+  const [revision, setRevision] = useState(0);
+  const requestId = useRef(0);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const restoreSearchFocus = useRef(false);
+
   const [isDarkMode, setIsDarkMode] = useState<boolean>(() => {
     const saved = localStorage.getItem('manager_theme');
     if (saved === 'dark') return true;
@@ -21,21 +34,15 @@ export const ManagerView: React.FC = () => {
     return Boolean(window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
   });
 
-  // Sync dark class on html root and listen to OS changes if user hasn't explicitly set a preference
   useEffect(() => {
-    if (isDarkMode) {
-      document.documentElement.classList.add('dark');
-    } else {
-      document.documentElement.classList.remove('dark');
-    }
+    document.documentElement.classList.toggle('dark', isDarkMode);
   }, [isDarkMode]);
 
   useEffect(() => {
-    const saved = localStorage.getItem('manager_theme');
-    if (!saved && window.matchMedia) {
+    if (window.matchMedia) {
       const mql = window.matchMedia('(prefers-color-scheme: dark)');
-      const listener = (e: MediaQueryListEvent) => {
-        setIsDarkMode(e.matches);
+      const listener = (event: MediaQueryListEvent) => {
+        if (!localStorage.getItem('manager_theme')) setIsDarkMode(event.matches);
       };
       mql.addEventListener('change', listener);
       return () => mql.removeEventListener('change', listener);
@@ -43,89 +50,159 @@ export const ManagerView: React.FC = () => {
   }, []);
 
   const toggleTheme = () => {
-    setIsDarkMode((prev) => {
-      const next = !prev;
-      localStorage.setItem('manager_theme', next ? 'dark' : 'light');
-      return next;
-    });
+    const next = !isDarkMode;
+    localStorage.setItem('manager_theme', next ? 'dark' : 'light');
+    setIsDarkMode(next);
   };
 
-  const fetchNotes = useCallback(async (query: string = '') => {
-    const queryId = ++lastQueryIdRef.current;
-    try {
-      const data = await window.stickyNotesAPI.getAllNotes({
-        search: query,
-        includeClosed: true,
-      });
-      if (queryId === lastQueryIdRef.current) {
-        setNotes(data);
-      }
-    } catch (err) {
-      console.error('Failed to load notes in manager:', err);
-    }
+  const refreshNotes = useCallback(() => {
+    requestId.current++;
+    setRevision((previous) => previous + 1);
   }, []);
 
-  // Debounced search query trigger
   useEffect(() => {
-    const timer = setTimeout(() => {
-      fetchNotes(searchQuery);
-    }, 150);
-    return () => clearTimeout(timer);
-  }, [fetchNotes, searchQuery]);
-
-  // IPC Event subscriptions
-  useEffect(() => {
-    let refreshTimeout: NodeJS.Timeout | null = null;
-    const debouncedRefresh = () => {
-      if (refreshTimeout) clearTimeout(refreshTimeout);
-      refreshTimeout = setTimeout(() => {
-        fetchNotes(searchQueryRef.current);
-      }, 150);
+    const unsubChanged = window.stickyNotesAPI.onNotesChanged(refreshNotes);
+    return () => {
+      unsubChanged();
     };
+  }, [refreshNotes]);
 
-    const unsubChanged = window.stickyNotesAPI.onNotesChanged(debouncedRefresh);
-    const unsubDeleted = window.stickyNotesAPI.onNoteDeleted(debouncedRefresh);
+  useEffect(() => {
+    const id = ++requestId.current;
+    const timer = setTimeout(async () => {
+      try {
+        const result = await window.stickyNotesAPI.getNotePreviews({
+          search: searchQuery,
+          limit: PAGE_SIZE + 1,
+          offset: page * PAGE_SIZE,
+        });
+        if (requestId.current !== id) return;
+        if (page > 0 && result.length === 0) {
+          requestId.current++;
+          setIsLoading(true);
+          setPage(page - 1);
+          return;
+        }
+        setNotes(result.slice(0, PAGE_SIZE));
+        setHasMore(result.length > PAGE_SIZE);
+        setLoadError(false);
+      } catch {
+        if (requestId.current === id) setLoadError(true);
+      } finally {
+        if (requestId.current === id) setIsLoading(false);
+      }
+    }, 150);
 
     return () => {
-      if (refreshTimeout) clearTimeout(refreshTimeout);
-      unsubChanged();
-      unsubDeleted();
+      clearTimeout(timer);
+      requestId.current++;
     };
-  }, [fetchNotes]);
+  }, [page, revision, searchQuery]);
 
-  const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setSearchQuery(e.target.value);
+  useEffect(() => {
+    let active = true;
+    let receivedUpdate = false;
+    const unsubscribe = window.stickyNotesAPI.onSettingsChanged((key, value) => {
+      if (key === 'autostart' && typeof value === 'boolean') {
+        receivedUpdate = true;
+        setAutostart(value);
+        setAutostartError(null);
+      }
+    });
+    window.stickyNotesAPI.getConfig().then(
+      (config) => {
+        if (active && !receivedUpdate) {
+          setAutostart(config.autostart);
+          setAutostartError(null);
+        }
+      },
+      () => {
+        if (active && !receivedUpdate) setAutostartError('Could not load the startup setting.');
+      },
+    );
+    return () => {
+      active = false;
+      unsubscribe();
+    };
+  }, [settingsRetry]);
+
+  const handleAutostartChange = async (enabled: boolean) => {
+    setIsUpdatingAutostart(true);
+    setAutostartError(null);
+    try {
+      await window.stickyNotesAPI.setConfig('autostart', enabled);
+      setAutostart(enabled);
+    } catch {
+      setAutostartError('Could not change the startup setting. Try again.');
+    } finally {
+      setIsUpdatingAutostart(false);
+    }
   };
 
-  const handleCreateNote = useCallback(async () => {
-    await window.stickyNotesAPI.createNote();
+  const changeSearch = (value: string) => {
+    if (value === searchQuery) return;
+    refreshNotes();
+    setIsLoading(true);
+    setLoadError(false);
+    setNotes([]);
+    setHasMore(false);
+    setPage(0);
+    setSearchQuery(value);
+  };
+
+  const changePage = (nextPage: number) => {
+    refreshNotes();
+    setIsLoading(true);
+    setLoadError(false);
+    setNotes([]);
+    setPage(nextPage);
+  };
+
+  const runAction = useCallback(async (action: () => Promise<unknown>, errorMessage: string) => {
+    setActionError(null);
+    try {
+      await action();
+    } catch {
+      setActionError(errorMessage);
+    }
   }, []);
 
   const handleOpenNote = useCallback((id: string) => {
-    window.stickyNotesAPI.openNoteWindow(id);
-  }, []);
+    void runAction(() => window.stickyNotesAPI.openNoteWindow(id), 'Could not open the note. Try again.');
+  }, [runAction]);
 
   const handleRequestDelete = useCallback((id: string) => {
+    setDeleteError(null);
     setNoteToDelete(id);
   }, []);
 
-  const handleConfirmDelete = useCallback(() => {
-    if (noteToDelete) {
-      const id = noteToDelete;
-      setNotes((prev) => prev.filter((n) => n.id !== id));
-      window.stickyNotesAPI.deleteNote(id);
+  const handleConfirmDelete = async () => {
+    if (!noteToDelete || isDeleting) return;
+    setIsDeleting(true);
+    setDeleteError(null);
+    try {
+      await window.stickyNotesAPI.deleteNote(noteToDelete);
+      restoreSearchFocus.current = true;
       setNoteToDelete(null);
+      setNotes((previous) => previous.filter((note) => note.id !== noteToDelete));
+      refreshNotes();
+    } catch {
+      setDeleteError('Could not delete the note. Try again.');
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
+  useEffect(() => {
+    if (noteToDelete === null && restoreSearchFocus.current) {
+      restoreSearchFocus.current = false;
+      searchInputRef.current?.focus();
     }
   }, [noteToDelete]);
 
-  const handleCloseManager = () => {
-    window.stickyNotesAPI.closeManagerWindow();
-  };
-
   return (
     <div className={`manager-container ${isDarkMode ? 'dark' : 'light'}`}>
-      {/* Top Header Bar */}
-      <div className="manager-header app-drag-region">
+      <header className="manager-header app-drag-region">
         <div className="manager-title">
           <StickyNoteIcon size={18} />
           <span>Sticky Notes</span>
@@ -135,7 +212,8 @@ export const ManagerView: React.FC = () => {
           <button
             type="button"
             className="header-btn"
-            title={isDarkMode ? 'Switch to Light mode' : 'Switch to Dark mode'}
+            aria-label={isDarkMode ? 'Switch to light mode' : 'Switch to dark mode'}
+            title={isDarkMode ? 'Switch to light mode' : 'Switch to dark mode'}
             onClick={toggleTheme}
           >
             {isDarkMode ? <Sun size={15} /> : <Moon size={15} />}
@@ -144,24 +222,26 @@ export const ManagerView: React.FC = () => {
           <button
             type="button"
             className="header-btn close-btn"
+            aria-label="Close notes list"
             title="Close notes list"
-            onClick={handleCloseManager}
+            onClick={() => void runAction(() => window.stickyNotesAPI.closeManagerWindow(), 'Could not close the notes list. Try again.')}
           >
             <X size={16} />
           </button>
         </div>
-      </div>
+      </header>
 
-      {/* Search Input Bar */}
       <div className="manager-search-bar app-no-drag">
         <div className="search-input-wrapper">
           <Search size={15} color={isDarkMode ? '#AAAAAA' : '#666666'} />
           <input
+            ref={searchInputRef}
             type="text"
             className="search-input"
-            placeholder="Search notes..."
+            aria-label="Search notes"
+            placeholder="Search notes…"
             value={searchQuery}
-            onChange={handleSearchChange}
+            onChange={(event) => changeSearch(event.target.value)}
             spellCheck={false}
             autoCorrect="off"
             autoCapitalize="off"
@@ -170,10 +250,11 @@ export const ManagerView: React.FC = () => {
             <button
               type="button"
               className="search-clear-btn"
+              aria-label="Clear search"
               title="Clear search"
               onClick={() => {
-                setSearchQuery('');
-                fetchNotes('');
+                changeSearch('');
+                searchInputRef.current?.focus();
               }}
             >
               <X size={14} />
@@ -184,40 +265,76 @@ export const ManagerView: React.FC = () => {
         <button
           type="button"
           className="add-note-btn"
+          aria-label="Create note"
           title="Create note"
-          onClick={handleCreateNote}
+          onClick={() => void runAction(() => window.stickyNotesAPI.createNote(), 'Could not create a note. Try again.')}
         >
           <Plus size={18} />
         </button>
       </div>
 
-      {/* Notes List */}
-      <div className="manager-notes-list app-no-drag">
-        {notes.length === 0 ? (
-          <div className="manager-empty-state">
-            <StickyNoteIcon size={40} />
-            <div>
-              {searchQuery
-                ? 'No matching notes found.'
-                : 'No sticky notes yet. Click "+" to create your first note!'}
-            </div>
+      {actionError && <p className="manager-status" role="alert">{actionError}</p>}
+      <main className="manager-notes-list app-no-drag" aria-label="Notes">
+        {loadError && (
+          <div className="manager-status">
+            <span role="alert">Could not load notes.</span>
+            <button type="button" className="modal-btn" onClick={() => {
+              setLoadError(false);
+              setIsLoading(true);
+              refreshNotes();
+            }}>Retry</button>
           </div>
-        ) : (
-          notes.map((note) => (
-            <NoteCard
-              key={note.id}
-              note={note}
-              onOpen={handleOpenNote}
-              onDelete={handleRequestDelete}
-            />
-          ))
         )}
-      </div>
+        {isLoading && <p className="manager-status" role="status">Loading notes…</p>}
+        {!isLoading && !loadError && notes.length === 0 && (
+          <div className="manager-empty-state" role="status">
+            <StickyNoteIcon size={40} />
+            <div>{searchQuery ? 'No matching notes found.' : 'No sticky notes yet.'}</div>
+          </div>
+        )}
+        {notes.map((note) => (
+          <NoteCard key={note.id} note={note} onOpen={handleOpenNote} onDelete={handleRequestDelete} />
+        ))}
+      </main>
 
-      {/* Delete Confirmation Modal */}
+      <footer className="manager-footer app-no-drag">
+        <label className="manager-autostart">
+          <input
+            type="checkbox"
+            checked={autostart ?? false}
+            disabled={autostart === null || isUpdatingAutostart}
+            onChange={(event) => void handleAutostartChange(event.target.checked)}
+          />
+          Start at login
+        </label>
+        {autostartError && (
+          <div className="manager-status">
+            <span role="alert">{autostartError}</span>
+            {autostart === null && (
+              <button type="button" className="modal-btn" onClick={() => setSettingsRetry((value) => value + 1)}>
+                Retry
+              </button>
+            )}
+          </div>
+        )}
+        {(page > 0 || hasMore) && (
+          <nav className="manager-pagination" aria-label="Notes pages">
+            <button type="button" className="modal-btn" aria-disabled={page === 0 || isLoading} onClick={() => {
+              if (page > 0 && !isLoading) changePage(page - 1);
+            }}>Previous</button>
+            <span role="status">Page {page + 1}</span>
+            <button type="button" className="modal-btn" aria-disabled={!hasMore || isLoading} onClick={() => {
+              if (hasMore && !isLoading) changePage(page + 1);
+            }}>Next</button>
+          </nav>
+        )}
+      </footer>
+
       <DeleteModal
         isOpen={noteToDelete !== null}
-        onConfirm={handleConfirmDelete}
+        isDeleting={isDeleting}
+        error={deleteError}
+        onConfirm={() => void handleConfirmDelete()}
         onCancel={() => setNoteToDelete(null)}
       />
     </div>

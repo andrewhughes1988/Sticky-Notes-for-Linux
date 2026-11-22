@@ -1,73 +1,58 @@
-import React, { useState } from 'react';
-import { Note, NOTE_COLORS } from '../../shared/types';
+import React from 'react';
+import { NotePreview, NOTE_COLORS } from '../../shared/types';
 import { formatFriendlyDate } from '../utils/date';
 import { Trash2 } from 'lucide-react';
 
 interface NoteCardProps {
-  note: Note;
+  note: NotePreview;
   onOpen: (id: string) => void;
   onDelete: (id: string) => void;
 }
 
 const NoteCardComponent: React.FC<NoteCardProps> = ({ note, onOpen, onDelete }) => {
-  const [isHovered, setIsHovered] = useState(false);
   const themeDef = NOTE_COLORS[note.color] || NOTE_COLORS.yellow;
   const isDark = note.color === 'charcoal';
   const theme = isDark ? themeDef.dark : themeDef.light;
-
-  const rawText = (note.content_plain || '').trim();
-  const previewText = rawText || 'Empty note';
-
-  // Subtly darken header and border on hover without shifting position
-  const activeHeaderColor = isHovered ? theme.headerBorder : theme.header;
-  const activeBorderColor = isHovered ? theme.headerBorder : theme.border;
-
-  const handleCardClick = () => {
-    onOpen(note.id);
-  };
-
-  const handleDeleteClick = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    onDelete(note.id);
-  };
+  const previewText = note.preview.trim() || 'Empty note';
+  const label = previewText.length > 80 ? `${previewText.slice(0, 80)}…` : previewText;
+  const date = formatFriendlyDate(note.updated_at);
+  const status = note.is_open ? 'Open' : 'Closed';
 
   return (
-    <div
-      className={`note-card ${isDark ? 'dark' : ''} ${isHovered ? 'hovered' : ''}`}
+    <article
+      className={`note-card ${isDark ? 'dark' : ''}`}
       style={{
         backgroundColor: theme.body,
         color: theme.text,
-        borderColor: activeBorderColor,
-        borderWidth: '1.5px',
-        borderTopWidth: '5px',
-        borderTopColor: activeHeaderColor,
-        transition: 'border-color 0.15s ease, box-shadow 0.15s ease',
+        borderColor: theme.border,
+        borderTopColor: theme.header,
       }}
-      onClick={handleCardClick}
-      onMouseEnter={() => setIsHovered(true)}
-      onMouseLeave={() => setIsHovered(false)}
     >
-      <div className="note-card-header">
-        <span className="note-card-date">
-          {formatFriendlyDate(note.updated_at)}
-        </span>
-        <div className="note-card-header-right">
+      <button
+        type="button"
+        className="note-card-open"
+        aria-label={`Open note: ${label}`}
+        aria-description={`${status}. Updated ${date}.`}
+        onClick={() => onOpen(note.id)}
+      >
+        <span className="note-card-header">
+          <span className="note-card-date">{date}</span>
           <span className={`note-card-badge ${note.is_open ? 'badge-open' : 'badge-closed'}`}>
-            {note.is_open ? 'Open' : 'Closed'}
+            {status}
           </span>
-          <button
-            type="button"
-            className="card-delete-icon-btn app-no-drag"
-            title="Delete note"
-            onClick={handleDeleteClick}
-          >
-            <Trash2 size={16} />
-          </button>
-        </div>
-      </div>
-
-      <div className="note-card-preview">{previewText}</div>
-    </div>
+        </span>
+        <span className="note-card-preview">{previewText}</span>
+      </button>
+      <button
+        type="button"
+        className="card-delete-icon-btn app-no-drag"
+        title="Delete note"
+        aria-label={`Delete note: ${label}`}
+        onClick={() => onDelete(note.id)}
+      >
+        <Trash2 size={16} />
+      </button>
+    </article>
   );
 };
 

@@ -6,6 +6,15 @@ import react from '@vitejs/plugin-react';
 export default defineConfig({
   plugins: [
     react(),
+    {
+      name: 'sticky-notes-dev-csp',
+      apply: 'serve',
+      transformIndexHtml(html) {
+        return html
+          .replace("script-src 'self'", "script-src 'self' 'unsafe-inline'")
+          .replace("connect-src 'none'", "connect-src 'self' ws://localhost:5173 ws://127.0.0.1:5173");
+      },
+    },
     electron({
       main: {
         entry: 'src/main/main.ts',

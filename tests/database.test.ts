@@ -1,6 +1,7 @@
 import Database from 'better-sqlite3';
 import { DatabaseService } from '../src/main/database';
 import fs from 'node:fs';
+import assert from 'node:assert/strict';
 import path from 'node:path';
 import os from 'node:os';
 
@@ -81,12 +82,12 @@ if (moved?.pos_x !== 500 || moved?.pos_y !== 400 || moved?.width !== 350 || move
   throw new Error('Geometry update failed!');
 }
 
-// 7. Test Soft Delete
+// 7. Test Delete
 dbService.deleteNote(note1.id);
 const deleted = dbService.getNoteById(note1.id);
 console.log('Deleted note result (should be null):', deleted);
 if (deleted !== null) {
-  throw new Error('Soft delete test failed!');
+  throw new Error('Delete test failed!');
 }
 
 // 8. Test Pagination (LIMIT & OFFSET)
@@ -106,8 +107,83 @@ console.log('Pagination page 2 count (should be 2):', page2.length);
 if (page2.length !== 2 || page2[0].id === page1[0].id) throw new Error('Pagination page 2 failed!');
 
 // Clean up
-dbService.deleteNote(note2.id, true);
-dbService.deleteNote(note1.id, true);
+dbService.deleteNote(note2.id);
+dbService.deleteNote(note1.id);
 dbService.close();
+
+const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sticky-notes-db-'));
+try {
+  const corruptPath = path.join(tempDir, 'damaged.db');
+  const corruptBytes = Buffer.from('not a sqlite database');
+  fs.writeFileSync(corruptPath, corruptBytes);
+  assert.throws(() => new DatabaseService(corruptPath));
+  assert.deepEqual(fs.readFileSync(corruptPath), corruptBytes);
+  assert.deepEqual(fs.readdirSync(tempDir), ['damaged.db']);
+
+  const dbPath = path.join(tempDir, 'legacy.db');
+  const seed = new DatabaseService(dbPath);
+  seed.createNote({ id: 'old', title: 'Forgotten', content_plain: 'hidden' });
+  seed.createNote({ id: 'live', title: 'Blueberry', content_plain: 'Notebook' });
+  seed.close();
+  const legacy = new Database(dbPath);
+  legacy.exec(`
+    DROP TRIGGER notes_ai;
+    DROP TRIGGER notes_au;
+    DROP TRIGGER notes_ad;
+    DROP INDEX idx_notes_page;
+    DROP TABLE notes_fts;
+    UPDATE notes SET deleted_at = 123 WHERE id = 'old';
+    CREATE VIRTUAL TABLE notes_fts USING fts5(id UNINDEXED, content_plain, content='notes');
+    INSERT INTO notes_fts(rowid, id, content_plain)
+      SELECT rowid, id, content_plain FROM notes WHERE deleted_at IS NULL;
+    PRAGMA user_version = 0;
+  `);
+  // Force an error after the migration has purged tombstones and dropped the old FTS table.
+  legacy.exec('CREATE INDEX idx_notes_page ON notes(id)');
+  assert.throws(() => new DatabaseService(dbPath), /idx_notes_page/);
+  assert.equal(legacy.pragma('user_version', { simple: true }), 0);
+  assert.deepEqual(legacy.prepare('SELECT COUNT(*) AS n FROM notes').get(), { n: 2 });
+  assert.deepEqual(legacy.prepare("SELECT id FROM notes_fts WHERE notes_fts MATCH 'notebook'").get(), { id: 'live' });
+  legacy.exec('DROP INDEX idx_notes_page');
+  legacy.close();
+  const upgraded = new DatabaseService(dbPath);
+  const inspect = new Database(dbPath);
+  const rowCount = inspect.prepare('SELECT count(*) AS n FROM notes');
+  assert.deepEqual(rowCount.get(), { n: 1 });
+  assert.equal(upgraded.getNotePreviews({ search: 'UEB oo' })[0]?.id, 'live');
+  assert.equal(upgraded.getNotePreviews({ search: 'U' })[0]?.id, 'live');
+  assert.deepEqual(upgraded.getNotePreviews({ search: '*:' }), []);
+  const indexPages = inspect.prepare('SELECT id, block FROM notes_fts_data ORDER BY id');
+  const beforeMetadata = indexPages.all();
+  upgraded.updateNoteBounds('live', { x: 5, y: 9, width: 320, height: 340 });
+  upgraded.updateNote('live', { color: 'blue', title: 'Blueberry' });
+  assert.deepEqual(indexPages.all(), beforeMetadata);
+  upgraded.updateNote('live', { title: 'Apricot' });
+  assert.deepEqual(upgraded.getNotePreviews({ search: 'UEB' }), []);
+  assert.equal(upgraded.getNotePreviews({ search: 'ric' })[0]?.id, 'live');
+  upgraded.deleteNote('live');
+  assert.deepEqual(rowCount.get(), { n: 0 });
+  assert.deepEqual(upgraded.getNotePreviews({ search: 'ric' }), []);
+
+  for (let i = 0; i < 105; i++) {
+    upgraded.createNote({ id: String(i).padStart(3, '0'), updated_at: 123, content_plain: 'x'.repeat(700) });
+  }
+  const previews = upgraded.getNotePreviews({ limit: 1000 });
+  assert.equal(previews.length, 101);
+  assert.deepEqual(Object.keys(previews[0]).sort(), ['color', 'id', 'is_open', 'preview', 'updated_at']);
+  assert.equal(previews[0].preview.length, 500);
+  assert.equal(previews[100].id, '100');
+  assert.equal(upgraded.getNotePreviews({ offset: 101 }).length, 4);
+  assert.equal(upgraded.getNotePreviews().length, 50);
+  inspect.exec('PRAGMA user_version = 100');
+  assert.ok(fs.existsSync(dbPath + '-wal'));
+  assert.throws(() => new DatabaseService(dbPath), /Unsupported notes database/);
+  assert.ok(fs.existsSync(dbPath + '-wal'));
+  assert.deepEqual(rowCount.get(), { n: 105 });
+  upgraded.close();
+  inspect.close();
+} finally {
+  fs.rmSync(tempDir, { recursive: true, force: true });
+}
 
 console.log('--- ALL DATABASE TESTS PASSED SUCCESSFULLY! ---');

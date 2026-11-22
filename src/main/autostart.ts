@@ -2,102 +2,100 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 
-type PackageFormat = 'appimage' | 'flatpak' | 'snap' | 'system' | 'unknown';
+function getAutostartCommand(): string[] {
+  if (process.env.APPIMAGE) return [process.env.APPIMAGE];
 
-/**
- * Detect the current packaging format based on environment variables
- */
-function detectPackageFormat(): PackageFormat {
-  // AppImage sets this when running the mounted image
-  if (process.env.APPIMAGE) {
-    return 'appimage';
-  }
-  // Flatpak sets FLATPAK_ID and typically runs from /app/
   if (process.env.FLATPAK_ID || process.execPath.startsWith('/app/')) {
-    return 'flatpak';
+    return ['flatpak', 'run', process.env.FLATPAK_ID || 'com.netsysprep.stickynotes'];
   }
-  // Snap sets SNAP_NAME and SNAP_INSTANCE_NAME
-  if (process.env.SNAP_NAME || process.env.SNAP_INSTANCE_NAME) {
-    return 'snap';
+
+  const snapName = process.env.SNAP_INSTANCE_NAME || process.env.SNAP_NAME;
+  if (snapName) return ['snap', 'run', snapName];
+
+  if (process.defaultApp && process.argv[1]) {
+    return [process.execPath, path.resolve(process.argv[1])];
   }
-  // Check if running from a system install (e.g., /usr/bin/)
-  if (process.execPath.startsWith('/usr/') || process.execPath.startsWith('/opt/')) {
-    return 'system';
-  }
-  return 'unknown';
+  return [process.execPath];
 }
 
-/**
- * Get the appropriate executable path for autostart based on packaging format
- */
-function getAutostartExecPath(): string {
-  const format = detectPackageFormat();
+function escapeExecArgument(argument: string): string {
+  // Desktop Entry string escaping is processed before Exec argument quoting.
+  const quoted = argument.replace(/["`$\\]/g, '\\$&').replace(/%/g, '%%');
+  const escaped = quoted.replace(/\\/g, '\\\\').replace(/\n/g, '\\n').replace(/\r/g, '\\r').replace(/\t/g, '\\t');
+  return /^[\w./-]+$/.test(escaped) ? escaped : `"${escaped}"`;
+}
 
-  switch (format) {
-    case 'appimage':
-      // APPIMAGE env var contains the path to the mounted AppImage
-      return process.env.APPIMAGE || process.execPath;
-    case 'flatpak':
-      // Flatpak apps are typically launched via flatpak run
-      return `flatpak run ${process.env.FLATPAK_ID || 'com.netsysprep.stickynotes'}`;
-    case 'snap':
-      // Snap apps are launched via snap run
-      const snapName = process.env.SNAP_NAME || 'sticky-notes';
-      return `snap run ${snapName}`;
-    case 'system':
-      // System install - use the actual executable path
-      return process.execPath;
-    case 'unknown':
-    default:
-      // Fallback: try APPIMAGE first, then execPath
-      return process.env.APPIMAGE || process.execPath || 'sticky-notes';
-  }
+function isMissing(error: unknown): boolean {
+  return (error as NodeJS.ErrnoException).code === 'ENOENT';
 }
 
 export class AutostartManager {
-  private autostartDir: string;
-  private desktopFilePath: string;
+  private readonly autostartDir: string;
+  private readonly desktopFilePath: string;
 
   constructor() {
-    const configDir = process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config');
+    const configHome = process.env.XDG_CONFIG_HOME;
+    const configDir = configHome && path.isAbsolute(configHome)
+      ? configHome
+      : path.join(os.homedir(), '.config');
+
     this.autostartDir = path.join(configDir, 'autostart');
     this.desktopFilePath = path.join(this.autostartDir, 'sticky-notes.desktop');
   }
 
   public isEnabled(): boolean {
-    return fs.existsSync(this.desktopFilePath);
+    try {
+      if (!fs.lstatSync(this.desktopFilePath).isFile()) return false;
+      const entry = fs.readFileSync(this.desktopFilePath, 'utf8');
+      const section = entry.split(/^\[/m).find((section) => section.startsWith('Desktop Entry]'));
+      return Boolean(section && /^Exec=\S/m.test(section)
+        && !/^Hidden\s*=\s*true\s*$/m.test(section)
+        && !/^X-GNOME-Autostart-enabled\s*=\s*false\s*$/m.test(section));
+    } catch (error) {
+      if (isMissing(error)) return false;
+      throw error;
+    }
   }
 
   public setEnabled(enabled: boolean): void {
-    try {
-      if (enabled) {
-        if (!fs.existsSync(this.autostartDir)) {
-          fs.mkdirSync(this.autostartDir, { recursive: true, mode: 0o700 });
-        }
+    if (!enabled) {
+      try {
+        fs.unlinkSync(this.desktopFilePath);
+      } catch (error) {
+        if (!isMissing(error)) throw error;
+      }
+      return;
+    }
 
-        const execPath = getAutostartExecPath();
-        const desktopEntry = `[Desktop Entry]
+    const command = getAutostartCommand();
+    if (!command[0] || command[0].includes('=') || command.some((argument) => argument.includes('\0'))) {
+      throw new Error('The launch command cannot be written to a desktop entry.');
+    }
+    // GLib checks the executable path before expanding escaped percent characters.
+    const argv = command[0].includes('%') ? ['/usr/bin/env', '--', ...command] : command;
+    const exec = [...argv, '--autostart'].map(escapeExecArgument).join(' ');
+    const desktopEntry = `[Desktop Entry]
 Type=Application
-Exec="${execPath}" --autostart
+Exec=${exec}
 Hidden=false
 NoDisplay=false
 X-GNOME-Autostart-enabled=true
 Name=Sticky Notes
 Comment=Windows-style Sticky Notes for Linux
-Icon=sticky-notes-linux
+Icon=com.netsysprep.stickynotes
 Categories=Utility;TextEditor;
 StartupNotify=false
 Terminal=false
 `;
 
-        fs.writeFileSync(this.desktopFilePath, desktopEntry, { encoding: 'utf8', mode: 0o644 });
-      } else {
-        if (fs.existsSync(this.desktopFilePath)) {
-          fs.unlinkSync(this.desktopFilePath);
-        }
-      }
-    } catch (err) {
-      console.error('Failed to update autostart desktop entry:', err);
+    fs.mkdirSync(this.autostartDir, { recursive: true, mode: 0o700 });
+    const temporaryDir = fs.mkdtempSync(path.join(this.autostartDir, '.sticky-notes-'));
+    const temporaryFile = path.join(temporaryDir, 'entry');
+    try {
+      fs.writeFileSync(temporaryFile, desktopEntry, { encoding: 'utf8', mode: 0o600, flag: 'wx' });
+      fs.renameSync(temporaryFile, this.desktopFilePath);
+    } finally {
+      fs.rmSync(temporaryDir, { recursive: true, force: true });
     }
   }
 }

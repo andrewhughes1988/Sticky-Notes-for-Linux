@@ -3,7 +3,14 @@ import path from 'node:path';
 import fs from 'node:fs';
 import os from 'node:os';
 import crypto from 'node:crypto';
-import { Note, NoteColor, AppConfig } from '../shared/types';
+import { Note, NoteColor, NotePreview, AppConfig } from '../shared/types';
+
+interface ListOptions {
+  search?: string;
+  includeClosed?: boolean;
+  limit?: number;
+  offset?: number;
+}
 
 export class DatabaseService {
   private db!: Database.Database;
@@ -31,19 +38,30 @@ export class DatabaseService {
       this.dbPath = path.join(dataDir, 'stickynotes.db');
     }
 
-    this.openDatabaseWithRecovery();
-
-    // Secure database file permissions 0600 (-rw-------)
-    try {
-      if (fs.existsSync(this.dbPath)) {
-        fs.chmodSync(this.dbPath, 0o600);
-      }
-    } catch {
-      // Ignore
+    this.db = new Database(this.dbPath);
+    // WAL and shared-memory sidecars inherit the database file mode when SQLite creates them.
+    if (this.dbPath !== ':memory:') {
+      try { fs.chmodSync(this.dbPath, 0o600); } catch { /* unsupported filesystem */ }
     }
-
-    this.initSchema();
-    this.initStatements();
+    try {
+      if (this.db.pragma('quick_check(1)', { simple: true }) !== 'ok') {
+        throw new Error('SQLite integrity check failed');
+      }
+      this.db.pragma('journal_mode = WAL');
+      this.db.pragma('synchronous = NORMAL');
+      this.db.pragma('secure_delete = ON');
+      this.db.pragma('foreign_keys = ON');
+      this.db.function('contains_folded', { deterministic: true }, (value: string, term: string) =>
+        value.toLowerCase().includes(term.toLowerCase()) ? 1 : 0
+      );
+      this.db.transaction(() => {
+        this.initSchema();
+        this.initStatements();
+      }).immediate();
+    } catch (error) {
+      this.db.close();
+      throw error;
+    }
   }
 
   // Pre-compiled prepared statements for high-throughput operations
@@ -53,7 +71,6 @@ export class DatabaseService {
   private stmtUpdateNoteBounds!: Database.Statement;
   private stmtSetNoteOpenState!: Database.Statement;
   private stmtToggleNotePin!: Database.Statement;
-  private stmtSoftDeleteNote!: Database.Statement;
   private stmtHardDeleteNote!: Database.Statement;
   private stmtGetSetting!: Database.Statement;
   private stmtGetAllSettings!: Database.Statement;
@@ -90,13 +107,6 @@ export class DatabaseService {
       WHERE id = ? AND deleted_at IS NULL
     `);
     this.stmtToggleNotePin = this.db.prepare('UPDATE notes SET is_pinned = ?, updated_at = ? WHERE id = ?');
-    this.stmtSoftDeleteNote = this.db.prepare(`
-      UPDATE notes SET
-        deleted_at = ?,
-        is_open = 0,
-        sync_status = 'pending_delete'
-      WHERE id = ?
-    `);
     this.stmtHardDeleteNote = this.db.prepare('DELETE FROM notes WHERE id = ?');
     this.stmtGetSetting = this.db.prepare('SELECT value FROM settings WHERE key = ?');
     this.stmtGetAllSettings = this.db.prepare('SELECT key, value FROM settings');
@@ -104,46 +114,6 @@ export class DatabaseService {
       INSERT INTO settings (key, value) VALUES (?, ?)
       ON CONFLICT(key) DO UPDATE SET value = excluded.value
     `);
-  }
-
-  private openDatabaseWithRecovery(): void {
-    try {
-      this.db = new Database(this.dbPath);
-      this.db.pragma('journal_mode = WAL');
-      this.db.pragma('synchronous = NORMAL');
-      this.db.pragma('foreign_keys = ON');
-      this.db.pragma('wal_autocheckpoint = 1000');
-
-      // Fast, lightweight verification (stops after 1 error, sub-millisecond)
-      const quickCheck = this.db.pragma('quick_check(1)') as [{ quick_check: string }] | undefined;
-      if (quickCheck && quickCheck[0] && quickCheck[0].quick_check !== 'ok') {
-        throw new Error(`Database quick_check failed: ${quickCheck[0].quick_check}`);
-      }
-    } catch (err) {
-      console.error('Database open failed, performing automatic corruption backup & recovery:', err);
-      try {
-        if (this.db) {
-          try { this.db.close(); } catch { /* ignore */ }
-        }
-        if (fs.existsSync(this.dbPath)) {
-          const corruptBackup = `${this.dbPath}.corrupt.${Date.now()}`;
-          fs.copyFileSync(this.dbPath, corruptBackup);
-          fs.unlinkSync(this.dbPath);
-        }
-        const walPath = `${this.dbPath}-wal`;
-        const shmPath = `${this.dbPath}-shm`;
-        if (fs.existsSync(walPath)) fs.unlinkSync(walPath);
-        if (fs.existsSync(shmPath)) fs.unlinkSync(shmPath);
-
-        this.db = new Database(this.dbPath);
-        this.db.pragma('journal_mode = WAL');
-        this.db.pragma('synchronous = NORMAL');
-        this.db.pragma('foreign_keys = ON');
-      } catch (recoveryErr) {
-        console.error('Fatal database recovery failure:', recoveryErr);
-        throw recoveryErr;
-      }
-    }
   }
 
   private initSchema(): void {
@@ -171,29 +141,6 @@ export class DatabaseService {
       );
 
       CREATE INDEX IF NOT EXISTS idx_notes_is_open ON notes(is_open) WHERE deleted_at IS NULL;
-      CREATE INDEX IF NOT EXISTS idx_notes_updated ON notes(updated_at DESC);
-
-      CREATE VIRTUAL TABLE IF NOT EXISTS notes_fts USING fts5(
-        id UNINDEXED,
-        content_plain,
-        content='notes',
-        content_rowid='rowid'
-      );
-
-      CREATE TRIGGER IF NOT EXISTS notes_ai AFTER INSERT ON notes WHEN new.deleted_at IS NULL BEGIN
-        INSERT INTO notes_fts(rowid, id, content_plain) VALUES (new.rowid, new.id, new.content_plain);
-      END;
-
-      CREATE TRIGGER IF NOT EXISTS notes_ad AFTER DELETE ON notes BEGIN
-        INSERT INTO notes_fts(notes_fts, rowid, id, content_plain) VALUES('delete', old.rowid, old.id, old.content_plain);
-      END;
-
-      CREATE TRIGGER IF NOT EXISTS notes_au AFTER UPDATE ON notes BEGIN
-        INSERT INTO notes_fts(notes_fts, rowid, id, content_plain) VALUES('delete', old.rowid, old.id, old.content_plain);
-        INSERT INTO notes_fts(rowid, id, content_plain)
-          SELECT new.rowid, new.id, new.content_plain
-          WHERE new.deleted_at IS NULL;
-      END;
 
       CREATE TABLE IF NOT EXISTS settings (
         key TEXT PRIMARY KEY,
@@ -201,7 +148,38 @@ export class DatabaseService {
       );
     `;
 
+    const version = this.db.pragma('user_version', { simple: true });
+    if (version !== 0 && version !== 1) throw new Error('Unsupported notes database schema version');
     this.db.exec(schema);
+    if (version === 0) {
+      // Remove legacy triggers before purging tombstones: deleted rows were absent from the old FTS index.
+      this.db.exec(`
+        DROP TRIGGER IF EXISTS notes_ai;
+        DROP TRIGGER IF EXISTS notes_ad;
+        DROP TRIGGER IF EXISTS notes_au;
+        DROP TABLE IF EXISTS notes_fts;
+        DELETE FROM notes WHERE deleted_at IS NOT NULL;
+        DROP INDEX IF EXISTS idx_notes_updated;
+        CREATE INDEX idx_notes_page ON notes(updated_at DESC, id ASC);
+        CREATE VIRTUAL TABLE notes_fts USING fts5(title, content_plain, content='notes', tokenize='trigram');
+        INSERT INTO notes_fts(notes_fts, rank) VALUES('secure-delete', 1);
+        INSERT INTO notes_fts(notes_fts) VALUES('rebuild');
+        CREATE TRIGGER notes_ai AFTER INSERT ON notes BEGIN
+          INSERT INTO notes_fts(rowid, title, content_plain) VALUES(new.rowid, new.title, new.content_plain);
+        END;
+        CREATE TRIGGER notes_ad AFTER DELETE ON notes BEGIN
+          INSERT INTO notes_fts(notes_fts, rowid, title, content_plain)
+            VALUES('delete', old.rowid, old.title, old.content_plain);
+        END;
+        CREATE TRIGGER notes_au AFTER UPDATE OF title, content_plain ON notes
+        WHEN new.title IS NOT old.title OR new.content_plain IS NOT old.content_plain BEGIN
+          INSERT INTO notes_fts(notes_fts, rowid, title, content_plain)
+            VALUES('delete', old.rowid, old.title, old.content_plain);
+          INSERT INTO notes_fts(rowid, title, content_plain) VALUES(new.rowid, new.title, new.content_plain);
+        END;
+        PRAGMA user_version = 1;
+      `);
+    }
 
     // Set default settings if not exists
     const defaultSettings: AppConfig = {
@@ -261,57 +239,45 @@ export class DatabaseService {
     return this.stmtGetOpenNotes.all() as Note[];
   }
 
-  public getAllNotes(options: { search?: string; includeClosed?: boolean; limit?: number; offset?: number } = {}): Note[] {
-    const { search, includeClosed = true, limit, offset = 0 } = options;
-    const limitClause = limit && limit > 0 ? `LIMIT ${Math.max(1, Math.floor(limit))} OFFSET ${Math.max(0, Math.floor(offset))}` : '';
+  public getAllNotes(options: ListOptions = {}): Note[] {
+    return this.listNotes('notes.*', options) as Note[];
+  }
 
-    if (search && search.trim().length > 0) {
-      const cleanTerms = search
-        .trim()
-        .replace(/["*]/g, '')
-        .split(/\s+/)
-        .filter((t) => t.length > 0);
+  public getNotePreviews(options: ListOptions = {}): NotePreview[] {
+    const limit = Number.isSafeInteger(options.limit) ? Math.max(1, Math.min(101, options.limit!)) : 50;
+    const columns = `notes.id, notes.color, notes.updated_at, notes.is_open,
+      substr(coalesce(nullif(notes.content_plain, ''), notes.title), 1, 500) AS preview`;
+    return this.listNotes(columns, { ...options, limit }) as NotePreview[];
+  }
 
-      const openFilter = includeClosed ? '' : 'AND notes.is_open = 1';
-      
-      if (cleanTerms.length > 0) {
-        try {
-          const ftsMatch = cleanTerms.map((t) => `"${t}"*`).join(' ');
-          const query = `
-            SELECT notes.* FROM notes
-            JOIN notes_fts ON notes.rowid = notes_fts.rowid
-            WHERE notes.deleted_at IS NULL ${openFilter}
-              AND notes_fts MATCH ?
-            ORDER BY notes.updated_at DESC
-            ${limitClause}
-          `;
-          const stmt = this.db.prepare(query);
-          return stmt.all(ftsMatch) as Note[];
-        } catch (err) {
-          // Safe fallback to LIKE if query has special syntax issues
-          const likeConditions = cleanTerms.map(() => '(content_plain LIKE ? OR title LIKE ?)').join(' AND ');
-          const fallbackQuery = `
-            SELECT * FROM notes
-            WHERE deleted_at IS NULL ${openFilter}
-              AND (${likeConditions})
-            ORDER BY updated_at DESC
-            ${limitClause}
-          `;
-          const stmt = this.db.prepare(fallbackQuery);
-          const params = cleanTerms.flatMap((t) => [`%${t}%`, `%${t}%`]);
-          return stmt.all(...params) as Note[];
-        }
+  private listNotes(columns: string, options: ListOptions): unknown[] {
+    const conditions = ['notes.deleted_at IS NULL'];
+    const params: (string | number)[] = [];
+    if (options.includeClosed === false) conditions.push('notes.is_open = 1');
+
+    // Every word fragment must occur somewhere in the title or body. Punctuation separates terms.
+    const terms = options.search?.match(/[\p{L}\p{M}\p{N}]+/gu) ?? [];
+    if (options.search?.trim() && terms.length === 0) return [];
+    const indexedTerms: string[] = [];
+    for (const term of terms) {
+      if ([...term].length >= 3) {
+        indexedTerms.push(`"${term}"`);
+      } else {
+        // The trigram index has no entries for one- and two-character queries.
+        conditions.push('(contains_folded(notes.title, ?) OR contains_folded(notes.content_plain, ?))');
+        params.push(term, term);
       }
     }
-
-    const openFilter = includeClosed ? '' : 'AND is_open = 1';
-    const stmt = this.db.prepare(`
-      SELECT * FROM notes
-      WHERE deleted_at IS NULL ${openFilter}
-      ORDER BY updated_at DESC
-      ${limitClause}
-    `);
-    return stmt.all() as Note[];
+    if (indexedTerms.length) {
+      conditions.push('notes.rowid IN (SELECT rowid FROM notes_fts WHERE notes_fts MATCH ?)');
+      params.push(indexedTerms.join(' AND '));
+    }
+    const limit = Number.isSafeInteger(options.limit) && options.limit! > 0 ? options.limit! : -1;
+    const offset = Number.isSafeInteger(options.offset) && options.offset! > 0 ? options.offset! : 0;
+    return this.db.prepare(`
+      SELECT ${columns} FROM notes WHERE ${conditions.join(' AND ')}
+      ORDER BY notes.updated_at DESC, notes.id ASC LIMIT ? OFFSET ?
+    `).all(...params, limit, offset);
   }
 
   public updateNote(id: string, updates: Partial<Note>): Note | null {
@@ -371,12 +337,8 @@ export class DatabaseService {
     return newPin === 1;
   }
 
-  public deleteNote(id: string, hardDelete: boolean = false): void {
-    if (hardDelete) {
-      this.stmtHardDeleteNote.run(id);
-    } else {
-      this.stmtSoftDeleteNote.run(Date.now(), id);
-    }
+  public deleteNote(id: string): void {
+    this.stmtHardDeleteNote.run(id);
   }
 
   // --- Settings Store ---

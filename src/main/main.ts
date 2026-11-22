@@ -1,4 +1,4 @@
-import { app } from 'electron';
+import { app, dialog } from 'electron';
 import { DatabaseService } from './database';
 import { WindowManager } from './windowManager';
 import { TrayService } from './tray';
@@ -50,8 +50,8 @@ if (!gotTheLock) {
       if (config.autostart) {
         autostartManager.setEnabled(true);
       }
-    } catch {
-      // Ignore
+    } catch (error) {
+      console.error('Failed to apply the autostart setting:', error);
     }
 
     // 5. Restore previously open notes
@@ -65,6 +65,11 @@ if (!gotTheLock) {
     } else {
       windowManager.restoreOpenNotes();
     }
+  }).catch((error) => {
+    console.error('Could not start Sticky Notes:', error);
+    dialog.showErrorBox('Sticky Notes could not start',
+      'Check that your notes database and its directory are accessible. Keep the database and any companion files together if you need to recover them.');
+    app.quit();
   });
 
   // When all windows are closed, exit cleanly so note state and bounds are preserved for next launch
@@ -72,29 +77,32 @@ if (!gotTheLock) {
     app.quit();
   });
 
-  const handleGracefulShutdown = () => {
-    try {
-      if (windowManager) {
-        windowManager.setQuitting(true);
-        windowManager.flushAllOpenNoteBounds();
-      }
-      if (trayService) trayService.destroy();
-      if (db) db.close();
-    } catch {
-      // Ignore
-    }
-    app.exit(0);
-  };
+  let shutdownPending = false;
+  let editorsSaved = false;
 
-  process.on('SIGTERM', handleGracefulShutdown);
-  process.on('SIGINT', handleGracefulShutdown);
+  process.on('SIGTERM', () => app.quit());
+  process.on('SIGINT', () => app.quit());
 
-  app.on('before-quit', () => {
-    if (windowManager) {
-      windowManager.setQuitting(true);
+  app.on('before-quit', (event) => {
+    if (!windowManager || editorsSaved) return;
+    event.preventDefault();
+    if (shutdownPending) return;
+    shutdownPending = true;
+    void windowManager.flushAllEditors().then(() => {
       windowManager.flushAllOpenNoteBounds();
-    }
-    if (trayService) trayService.destroy();
-    if (db) db.close();
+      windowManager.setQuitting(true);
+      editorsSaved = true;
+      app.quit();
+    }).catch((error) => {
+      shutdownPending = false;
+      windowManager.resumeEditors();
+      console.error('Could not save all notes before quitting', error);
+      dialog.showErrorBox('Sticky Notes could not quit', 'Check your open notes for save errors, then try quitting again.');
+    });
+  });
+
+  app.on('will-quit', () => {
+    trayService?.destroy();
+    db?.close();
   });
 }

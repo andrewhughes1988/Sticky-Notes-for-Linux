@@ -136,6 +136,12 @@ html, body, #root {
 }
 
 /* Color Menu Popover (Flyout) */
+.color-menu-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+}
+
 .color-menu-popover {
   position: absolute;
   top: 36px;
@@ -169,14 +175,15 @@ html, body, #root {
 
 .color-palette-grid {
   display: grid;
-  grid-template-columns: repeat(7, 1fr);
-  gap: 6px;
+  grid-template-columns: repeat(7, 24px);
+  gap: 5px;
   margin-bottom: 10px;
 }
 
 .color-swatch {
   width: 24px;
   height: 24px;
+  padding: 0;
   border-radius: 50%;
   border: 2px solid transparent;
   cursor: pointer;
@@ -625,20 +632,12 @@ html, body, #root {
 /* Note Preview Card */
 .note-card {
   border-radius: 2px;
-  padding: 10px 12px;
-  cursor: pointer;
+  flex-shrink: 0;
   position: relative;
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
   box-shadow: var(--shadow-card);
-  border: 1px solid rgba(0, 0, 0, 0.06);
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  min-height: 68px;
-  user-select: none;
-  /* Performance: skip rendering off-screen cards until scrolled into view */
-  content-visibility: auto;
-  contain-intrinsic-size: 80px;
+  border: 1.5px solid rgba(0, 0, 0, 0.06);
+  border-top-width: 5px;
 }
 
 .note-card:hover {
@@ -652,10 +651,28 @@ html, body, #root {
   justify-content: space-between;
 }
 
-.note-card-header-right {
+.note-card-open {
   display: flex;
-  align-items: center;
-  gap: 8px;
+  flex-direction: column;
+  gap: 6px;
+  min-height: 68px;
+  padding: 10px 12px;
+  width: 100%;
+  border: none;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.note-card-open .note-card-header {
+  width: 100%;
+  min-height: 26px;
+  padding-right: 34px;
+}
+
+.note-card-open:focus-visible {
+  outline-offset: -3px;
 }
 
 .note-card-date {
@@ -697,6 +714,9 @@ html, body, #root {
 }
 
 .card-delete-icon-btn {
+  position: absolute;
+  top: 10px;
+  right: 12px;
   background: transparent;
   border: none;
   border-radius: 4px;
@@ -737,30 +757,26 @@ html, body, #root {
 }
 
 /* Windows Delete Confirmation Modal */
-.modal-overlay {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: rgba(0, 0, 0, 0.45);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 1000;
-  animation: modalFadeIn 0.12s ease;
-}
-
 .modal-dialog {
   background: #FFFFFF;
+  color: #202020;
+  border: 0;
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-flyout);
-  width: 320px;
+  width: min(320px, calc(100% - 24px));
   padding: 20px;
-  animation: modalScaleIn 0.15s cubic-bezier(0.1, 0.9, 0.2, 1);
+}
+
+.modal-dialog[open] {
   display: flex;
   flex-direction: column;
   gap: 14px;
+  animation: modalScaleIn 0.15s cubic-bezier(0.1, 0.9, 0.2, 1);
+}
+
+.modal-dialog::backdrop {
+  background: rgba(0, 0, 0, 0.45);
+  animation: modalFadeIn 0.12s ease;
 }
 
 .dark .modal-dialog {
@@ -837,3 +853,50 @@ html, body, #root {
   background: #B71C1C;
 }
 
+
+.manager-footer {
+  display: flex;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px;
+  border-top: 1px solid rgba(127, 127, 127, 0.28);
+  font-size: 12px;
+}
+
+.manager-autostart,
+.manager-status,
+.manager-pagination {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.manager-pagination {
+  margin-inline-start: auto;
+}
+
+.manager-status {
+  margin: 0;
+}
+
+.manager-container > .manager-status {
+  padding: 0 14px 8px;
+}
+
+.modal-btn[aria-disabled="true"] {
+  opacity: 0.55;
+  cursor: default;
+}
+
+:where(.manager-container, .note-container) button:focus-visible,
+.modal-dialog button:focus-visible {
+  outline: 2px solid #0078D4;
+}
+
+.dark :where(.manager-container, .note-container) button:focus-visible,
+:where(.manager-container.dark, .note-container.dark) button:focus-visible,
+.dark .modal-dialog button:focus-visible {
+  outline-color: #60CDFF;
+}

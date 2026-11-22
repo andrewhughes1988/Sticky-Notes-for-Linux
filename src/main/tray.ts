@@ -36,7 +36,7 @@ export class TrayService {
       {
         label: 'New Note',
         click: () => {
-          this.windowManager.createNewNoteWindow();
+          if (!this.windowManager.isClosing()) this.windowManager.createNewNoteWindow();
         },
       },
       {

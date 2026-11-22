@@ -22,6 +22,16 @@ export interface Note {
   last_synced_at: number | null;
 }
 
+export type NotePreview = Pick<Note, 'id' | 'color' | 'updated_at' | 'is_open'> & {
+  preview: string;
+};
+
+export interface NotePreviewQuery {
+  search?: string;
+  limit?: number;
+  offset?: number;
+}
+
 export interface ColorThemeDef {
   id: NoteColor;
   name: string;
@@ -300,30 +310,29 @@ export interface AppConfig {
 
 export interface StickyNotesAPI {
   // Note Operations
-  createNote: (initial?: Partial<Note>) => Promise<Note>;
+  createNote: (initial?: Pick<Partial<Note>, 'color'>) => Promise<Note>;
   getNote: (id: string) => Promise<Note | null>;
-  getAllNotes: (query?: { search?: string; includeClosed?: boolean; limit?: number; offset?: number }) => Promise<Note[]>;
-  updateNote: (id: string, updates: Partial<Note>) => Promise<Note>;
+  getNotePreviews: (query?: NotePreviewQuery) => Promise<NotePreview[]>;
+  updateNote: (id: string, updates: Partial<Pick<Note, 'color' | 'content_html' | 'content_plain'>>) => Promise<Note>;
   closeNoteWindow: (id: string) => Promise<void>;
   openNoteWindow: (id: string) => Promise<void>;
   deleteNote: (id: string) => Promise<void>;
   togglePin: (id: string) => Promise<boolean>;
-  updateNoteBounds: (id: string, bounds: { x: number; y: number; width: number; height: number }) => Promise<void>;
   
   // Manager Operations
-  toggleManagerWindow: () => Promise<void>;
   showManagerWindow: () => Promise<void>;
   closeManagerWindow: () => Promise<void>;
   
   // System Events
-  onNoteUpdated: (callback: (note: Note) => void) => () => void;
-  onNoteDeleted: (callback: (id: string) => void) => () => void;
   onNotesChanged: (callback: () => void) => () => void;
   onSettingsChanged: (callback: (key: string, value: any) => void) => () => void;
 
+  onFlushRequested: (callback: () => Promise<void>) => () => void;
+  onFlushCancelled: (callback: () => void) => () => void;
+
   // Settings
   getConfig: () => Promise<AppConfig>;
-  setConfig: (key: keyof AppConfig, value: any) => Promise<void>;
+  setConfig: <K extends keyof AppConfig>(key: K, value: AppConfig[K]) => Promise<void>;
 
   // Window utilities
   isNoteWindow: boolean;

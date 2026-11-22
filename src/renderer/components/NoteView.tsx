@@ -12,6 +12,11 @@ interface NoteViewProps {
 
 export const NoteView: React.FC<NoteViewProps> = ({ noteId }) => {
   const [note, setNote] = useState<Note | null>(null);
+  const [error, setError] = useState('');
+  const [loadAttempt, setLoadAttempt] = useState(0);
+  const [isDeleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState('');
+  const container = useRef<HTMLDivElement>(null);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
 
@@ -27,82 +32,92 @@ export const NoteView: React.FC<NoteViewProps> = ({ noteId }) => {
   const editorApiRef = useRef<{
     format: (cmd: string, val?: string) => void;
     insertChecklist: () => void;
-    flush: () => void;
+    flush: () => Promise<void>;
   } | null>(null);
 
-  const setEditorApi = useCallback((api: any) => {
+  const setEditorApi = useCallback((api: NonNullable<typeof editorApiRef.current>) => {
     editorApiRef.current = api;
   }, []);
 
   // Load note data on mount
   useEffect(() => {
     let isMounted = true;
+    setError('');
     window.stickyNotesAPI.getNote(noteId).then((data) => {
       if (!isMounted) return;
-      if (data) {
-        setNote(data);
-      } else {
-        // If note is missing from DB, create a default note record
-        window.stickyNotesAPI.createNote({ id: noteId, color: 'yellow' }).then((created) => {
-          if (isMounted && created) setNote(created);
-        });
-      }
+      if (!data) throw new Error('Missing note');
+      setNote(data);
+    }).catch(() => {
+      if (isMounted) setError('Could not load this note.');
     });
+    return () => { isMounted = false; };
+  }, [noteId, loadAttempt]);
 
-    const unsubscribe = window.stickyNotesAPI.onNoteUpdated((updatedNote) => {
-      if (isMounted && updatedNote.id === noteId) {
-        setNote((prev) => (prev ? { ...prev, ...updatedNote } : updatedNote));
-      }
+  useEffect(() => {
+    const unsubscribe = window.stickyNotesAPI.onFlushRequested(async () => {
+      if (container.current) container.current.inert = true;
+      await editorApiRef.current?.flush();
     });
-
-    return () => {
-      isMounted = false;
-      unsubscribe();
-    };
-  }, [noteId]);
+    const resume = window.stickyNotesAPI.onFlushCancelled(() => {
+      if (container.current) container.current.inert = false;
+    });
+    return () => { unsubscribe(); resume(); };
+  }, []);
 
   const activeColor = note?.color || 'yellow';
   const themeDef = NOTE_COLORS[activeColor] || NOTE_COLORS.yellow;
   const isDark = activeColor === 'charcoal';
   const currentTheme = isDark ? themeDef.dark : themeDef.light;
 
-  const handleColorChange = useCallback((newColor: NoteColor) => {
-    if (!note) return;
-    editorApiRef.current?.flush();
-    setNote((prev) => (prev ? { ...prev, color: newColor } : null));
-    window.stickyNotesAPI.updateNote(note.id, { color: newColor });
-  }, [note]);
+  const handleColorChange = useCallback(async (color: NoteColor) => {
+    try {
+      const saved = await window.stickyNotesAPI.updateNote(noteId, { color });
+      setNote((prev) => prev && { ...prev, color: saved.color });
+      setError('');
+    } catch { setError('Could not change the note color.'); }
+  }, [noteId]);
 
-  const handleContentChange = useCallback((html: string, plain: string) => {
-    window.stickyNotesAPI.updateNote(noteId, {
+  const handleContentChange = useCallback(async (html: string, plain: string) => {
+    const saved = await window.stickyNotesAPI.updateNote(noteId, {
       content_html: html,
       content_plain: plain,
     });
+    if (!saved) throw new Error('The note could not be saved.');
   }, [noteId]);
 
   const handleTogglePin = useCallback(async () => {
-    if (!note) return;
-    const newPinned = await window.stickyNotesAPI.togglePin(note.id);
-    setNote((prev) => (prev ? { ...prev, is_pinned: newPinned ? 1 : 0 } : null));
-  }, [note]);
+    try {
+      const pinned = await window.stickyNotesAPI.togglePin(noteId);
+      setNote((prev) => prev && { ...prev, is_pinned: pinned ? 1 : 0 });
+      setError('');
+    } catch { setError('Could not change the pin.'); }
+  }, [noteId]);
 
   const handleNewNote = useCallback(() => {
-    editorApiRef.current?.flush();
-    window.stickyNotesAPI.createNote({ color: note?.color || 'yellow' });
+    window.stickyNotesAPI.createNote({ color: note?.color || 'yellow' })
+      .catch(() => setError('Could not create a note.'));
   }, [note?.color]);
 
   const handleCloseNote = useCallback(() => {
-    editorApiRef.current?.flush();
-    window.stickyNotesAPI.closeNoteWindow(noteId);
+    window.stickyNotesAPI.closeNoteWindow(noteId)
+      .catch(() => setError('Could not close this note.'));
   }, [noteId]);
 
-  const handleConfirmDelete = useCallback(() => {
-    setIsDeleteModalOpen(false);
-    window.stickyNotesAPI.deleteNote(noteId);
-  }, [noteId]);
+  const handleConfirmDelete = async () => {
+    setDeleteError('');
+    setDeleting(true);
+    try {
+      await window.stickyNotesAPI.deleteNote(noteId);
+    } catch {
+      setDeleteError('Could not delete this note. Try again.');
+    } finally {
+      setDeleting(false);
+    }
+  };
 
   return (
     <div
+      ref={container}
       className={`note-container ${isDark ? 'dark' : ''}`}
       style={
         {
@@ -131,6 +146,7 @@ export const NoteView: React.FC<NoteViewProps> = ({ noteId }) => {
         }
       >
         <NoteHeader
+          isMenuOpen={isMenuOpen}
           isPinned={Boolean(note?.is_pinned)}
           onNewNote={handleNewNote}
           onTogglePin={handleTogglePin}
@@ -144,20 +160,22 @@ export const NoteView: React.FC<NoteViewProps> = ({ noteId }) => {
         <ColorPicker
           currentColor={activeColor}
           onSelectColor={handleColorChange}
-          onOpenManager={() => window.stickyNotesAPI.showManagerWindow()}
-          onDeleteNote={() => setIsDeleteModalOpen(true)}
+          onOpenManager={() => window.stickyNotesAPI.showManagerWindow().catch(() => setError('Could not open the notes list.'))}
+          onDeleteNote={() => { setDeleteError(''); setIsDeleteModalOpen(true); }}
           onClose={() => setIsMenuOpen(false)}
         />
       )}
 
       {/* Rich Editor */}
-      <RichEditor
-        initialHtml={note?.content_html || ''}
+      {error && <div role="alert">{error} {!note && <button onClick={() => setLoadAttempt(n => n + 1)}>Retry</button>}</div>}
+      {note && <RichEditor
+        key={note.id}
+        initialHtml={note.content_html}
         placeholder="Take a note..."
         onChange={handleContentChange}
         onFormatChange={setActiveFormats}
         editorRefExpose={setEditorApi}
-      />
+      />}
 
       {/* Bottom Formatting Toolbar */}
       <EditorToolbar
@@ -169,6 +187,8 @@ export const NoteView: React.FC<NoteViewProps> = ({ noteId }) => {
       {/* Delete Confirmation Dialog */}
       <DeleteModal
         isOpen={isDeleteModalOpen}
+        error={deleteError}
+        isDeleting={isDeleting}
         onConfirm={handleConfirmDelete}
         onCancel={() => setIsDeleteModalOpen(false)}
       />

@@ -3,6 +3,7 @@ import { Plus, MoreHorizontal, X } from 'lucide-react';
 import { PinIcon } from './PinIcon';
 
 interface NoteHeaderProps {
+  isMenuOpen: boolean;
   isPinned: boolean;
   onNewNote: () => void;
   onTogglePin: () => void;
@@ -11,6 +12,7 @@ interface NoteHeaderProps {
 }
 
 const NoteHeaderComponent: React.FC<NoteHeaderProps> = ({
+  isMenuOpen,
   isPinned,
   onNewNote,
   onTogglePin,
@@ -41,6 +43,7 @@ const NoteHeaderComponent: React.FC<NoteHeaderProps> = ({
           className={`header-btn ${isPinned ? 'active' : ''}`}
           title={isPinned ? 'Unpin from top' : 'Always on top'}
           style={{ opacity: isPinned ? 1 : 0.7 }}
+          aria-pressed={isPinned}
           onClick={onTogglePin}
         >
           <PinIcon isPinned={isPinned} size={16} />
@@ -49,6 +52,8 @@ const NoteHeaderComponent: React.FC<NoteHeaderProps> = ({
         <button
           type="button"
           className="header-btn"
+          aria-expanded={isMenuOpen}
+          aria-haspopup="dialog"
           title="Menu"
           onClick={onToggleMenu}
         >
