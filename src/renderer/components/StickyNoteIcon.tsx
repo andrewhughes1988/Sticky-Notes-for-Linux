@@ -17,8 +17,7 @@ export const StickyNoteIcon: React.FC<StickyNoteIconProps> = ({ size = 18, class
       width={size}
       height={size}
       aria-hidden="true"
-      className={className}
-      style={{ display: 'inline-block', verticalAlign: 'middle', flexShrink: 0 }}
+      className={className ? `sticky-note-icon ${className}` : 'sticky-note-icon'}
     >
       <defs>
         <linearGradient id={yellowGradId} x1="0%" y1="0%" x2="0%" y2="100%">

@@ -13,6 +13,7 @@ export default defineConfig({
       transformIndexHtml(html) {
         return html
           .replace("script-src 'self'", "script-src 'self' 'unsafe-inline'")
+          .replace("style-src 'self'", "style-src 'self' 'unsafe-inline'")
           .replace("connect-src 'none'", "connect-src 'self' ws://localhost:5173 ws://127.0.0.1:5173");
       },
     },

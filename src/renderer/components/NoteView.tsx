@@ -169,31 +169,10 @@ export const NoteView: React.FC<NoteViewProps> = ({ noteId }) => {
     <div
       ref={container}
       className={`note-container ${isDark ? 'dark' : ''}`}
-      style={
-        {
-          backgroundColor: currentTheme.body,
-          color: currentTheme.text,
-          borderColor: currentTheme.border,
-          '--theme-border': currentTheme.border,
-          '--theme-header-border': currentTheme.headerBorder,
-          '--theme-btn-hover': currentTheme.buttonHover,
-          '--theme-btn-active': currentTheme.buttonActive,
-          '--theme-toolbar-bg': currentTheme.toolbarBg,
-          '--theme-placeholder': currentTheme.placeholder,
-        } as React.CSSProperties
-      }
+      data-color={activeColor}
     >
       {/* Header Bar */}
-      <div
-        style={
-          {
-            backgroundColor: currentTheme.header,
-            color: currentTheme.headerText,
-            '--header-btn-hover': currentTheme.headerBtnHover,
-            '--header-btn-active': currentTheme.headerBtnActive,
-          } as React.CSSProperties
-        }
-      >
+      <div className="note-header-wrapper">
         <NoteHeader
           isMenuOpen={isMenuOpen}
           isPinned={Boolean(note?.is_pinned)}

@@ -148,6 +148,7 @@ export const RichEditor: React.FC<RichEditorProps> = ({
   const initialContent = useMemo(() => upgradeLegacyChecklistHtml(initialHtml), [initialHtml]);
 
   const editor = useEditor({
+    injectCSS: false,
     extensions: [
       StarterKit.configure({
         blockquote: false,
@@ -233,7 +234,10 @@ export const RichEditor: React.FC<RichEditorProps> = ({
         if (composing.current) throw compositionPending;
         if (!editor || editor.isDestroyed) throw new Error('Editor is unavailable');
         const html = editor.getHTML();
-        const plain = editor.getText({ blockSeparator: '\n' }).replace(/\u200B/g, '').trim();
+        const plain = editor
+          .getText({ blockSeparator: '\n' })
+          .replace(/\u200B/g, '')
+          .trim();
         await onChangeRef.current(html, plain);
       });
       setSaveError('');

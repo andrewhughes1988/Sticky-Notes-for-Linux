@@ -43,10 +43,9 @@ const NoteHeaderComponent: React.FC<NoteHeaderProps> = ({
       <div className="header-right app-no-drag">
         <button
           type="button"
-          className={`header-btn ${isPinned ? 'active' : ''}`}
+          className={`header-btn pin-btn ${isPinned ? 'active' : ''}`}
           aria-label={isPinned ? 'Unpin from top' : 'Pin always on top'}
           title={isPinned ? 'Unpin from top' : 'Always on top'}
-          style={{ opacity: isPinned ? 1 : 0.7 }}
           aria-pressed={isPinned}
           onClick={onTogglePin}
         >

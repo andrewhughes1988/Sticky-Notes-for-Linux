@@ -18,15 +18,7 @@ const NoteCardComponent: React.FC<NoteCardProps> = ({ note, onOpen, onDelete }) 
   const status = note.is_open ? 'Open' : 'Closed';
 
   return (
-    <article
-      className={`note-card ${theme.isDark ? 'dark' : ''}`}
-      style={{
-        backgroundColor: theme.body,
-        color: theme.text,
-        borderColor: theme.border,
-        borderTopColor: theme.header,
-      }}
-    >
+    <article className={`note-card ${theme.isDark ? 'dark' : ''}`} data-color={note.color}>
       <button
         type="button"
         className="note-card-open"

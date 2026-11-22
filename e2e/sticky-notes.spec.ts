@@ -31,13 +31,52 @@ async function launchApp(envDirs: ReturnType<typeof createTempEnv>): Promise<Ele
   });
 }
 
+interface CspViolation {
+  violatedDirective: string;
+  effectiveDirective: string;
+  sourceFile: string;
+}
+
+async function attachCspMonitor(app: ElectronApplication): Promise<void> {
+  await app.context().addInitScript(() => {
+    const win = window as unknown as { __cspViolations?: CspViolation[] };
+    win.__cspViolations = [];
+    window.addEventListener('securitypolicyviolation', (event) => {
+      win.__cspViolations?.push({
+        violatedDirective: event.violatedDirective,
+        effectiveDirective: event.effectiveDirective,
+        sourceFile: event.sourceFile,
+      });
+    });
+  });
+}
+
+function trackConsoleErrors(page: Page, errors: string[]): void {
+  page.on('console', (msg) => {
+    if (msg.type() === 'error') {
+      errors.push(msg.text());
+    }
+  });
+}
+
+async function assertNoCspViolations(page: Page, label: string): Promise<void> {
+  const violations = await page.evaluate(() => {
+    const win = window as unknown as { __cspViolations?: CspViolation[] };
+    return win.__cspViolations ?? [];
+  });
+  expect(violations, `CSP violations in ${label}`).toEqual([]);
+}
+
 test('full lifecycle: create, edit with Tiptap, search, Trash/restore, tray persistence, and relaunch', async () => {
   const envDirs = createTempEnv();
   let app: ElectronApplication | undefined;
+  const consoleErrors: string[] = [];
 
   try {
     app = await launchApp(envDirs);
+    await attachCspMonitor(app);
     const noteWindow: Page = await app.firstWindow();
+    trackConsoleErrors(noteWindow, consoleErrors);
     await noteWindow.waitForLoadState('domcontentloaded');
 
     // 1. Verify accessible header & formatting toolbar buttons on initial Welcome note
@@ -66,7 +105,14 @@ test('full lifecycle: create, edit with Tiptap, search, Trash/restore, tray pers
     await noteWindow.keyboard.press('Backspace');
     await noteWindow.keyboard.type('Playwright E2E Checklist Item');
     await noteWindow.getByRole('button', { name: 'Checklist' }).click();
-    await expect(noteWindow.locator('ul[data-type="taskList"] input[type="checkbox"]')).toBeVisible();
+    await expect(
+      noteWindow.locator('ul[data-type="taskList"] input[type="checkbox"]')
+    ).toBeVisible();
+
+    // 2b. Open color picker and switch note color
+    await noteWindow.getByRole('button', { name: 'Note options' }).click();
+    await noteWindow.getByRole('button', { name: 'Blue' }).click();
+    await expect(noteWindow.locator('.note-container')).toHaveAttribute('data-color', 'blue');
 
     // Wait for autosave idle window (300ms + margin)
     await noteWindow.waitForTimeout(500);
@@ -75,6 +121,7 @@ test('full lifecycle: create, edit with Tiptap, search, Trash/restore, tray pers
     const secondWindowPromise = app.waitForEvent('window');
     await noteWindow.keyboard.press('Control+n');
     const secondWindow = await secondWindowPromise;
+    trackConsoleErrors(secondWindow, consoleErrors);
     await secondWindow.waitForLoadState('domcontentloaded');
     const secondEditor = secondWindow.getByRole('textbox', { name: 'Note text' });
     await expect(secondEditor).toBeVisible();
@@ -87,7 +134,9 @@ test('full lifecycle: create, edit with Tiptap, search, Trash/restore, tray pers
     await secondWindow.getByRole('button', { name: 'Note options' }).click();
     await secondWindow.getByRole('button', { name: 'Notes list' }).click();
     const managerWindow = await managerPromise;
+    trackConsoleErrors(managerWindow, consoleErrors);
     await managerWindow.waitForLoadState('domcontentloaded');
+    await assertNoCspViolations(secondWindow, 'secondWindow');
 
     // 5. Search for the first note in Manager
     const searchInput = managerWindow.getByRole('textbox', { name: 'Search notes' });
@@ -101,14 +150,21 @@ test('full lifecycle: create, edit with Tiptap, search, Trash/restore, tray pers
     await expect(searchInput).toHaveValue('');
 
     // 6. Soft-delete the second note to Trash, then open unified Settings & actions menu -> Open Trash -> Restore
-    await managerWindow.getByRole('button', { name: /Move note to Trash: Second Note To Trash/ }).click();
+    await managerWindow
+      .getByRole('button', { name: /Move note to Trash: Second Note To Trash/ })
+      .click();
     await managerWindow.getByRole('button', { name: 'Move to Trash' }).click();
     await expect(
       managerWindow.getByRole('button', { name: /Open note: Second Note To Trash/ })
     ).toHaveCount(0);
 
     await managerWindow.getByRole('button', { name: 'Settings and actions' }).click();
-    await expect(managerWindow.getByRole('switch', { name: 'Dark mode' })).toBeVisible();
+    const darkModeSwitch = managerWindow.getByRole('switch', { name: 'Dark mode' });
+    await expect(darkModeSwitch).toBeVisible();
+    await darkModeSwitch.click();
+    await expect(managerWindow.locator('.manager-container')).toHaveClass(/dark/);
+    await darkModeSwitch.click();
+    await expect(managerWindow.locator('.manager-container')).not.toHaveClass(/dark/);
     await expect(managerWindow.getByRole('switch', { name: 'Start at login' })).toBeVisible();
     await expect(managerWindow.getByRole('button', { name: 'Export as JSON' })).toBeVisible();
     await expect(managerWindow.getByRole('button', { name: 'Export as Markdown' })).toBeVisible();
@@ -120,14 +176,21 @@ test('full lifecycle: create, edit with Tiptap, search, Trash/restore, tray pers
       managerWindow.getByRole('button', { name: /Open note: Second Note To Trash/ })
     ).toBeVisible();
 
+    await assertNoCspViolations(noteWindow, 'noteWindow');
+    await assertNoCspViolations(managerWindow, 'managerWindow');
+
     // 7. Quit cleanly and relaunch to verify persistence
     await app.close();
     app = await launchApp(envDirs);
+    await attachCspMonitor(app);
     const restoredWindow = await app.firstWindow();
+    trackConsoleErrors(restoredWindow, consoleErrors);
     await restoredWindow.waitForLoadState('domcontentloaded');
     await expect(restoredWindow.getByRole('textbox', { name: 'Note text' })).toContainText(
       'Playwright E2E Checklist Item'
     );
+    await assertNoCspViolations(restoredWindow, 'restoredWindow');
+    expect(consoleErrors, 'Console errors during E2E run').toEqual([]);
   } finally {
     if (app) {
       await app.close().catch(() => {});
