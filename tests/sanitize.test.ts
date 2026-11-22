@@ -85,10 +85,31 @@ test('sanitizeNoteHtmlMain handles > in quoted attributes, unclosed/bogus commen
   assert.equal(sanitizeNoteHtmlMain('<a href="javascript&#58;alert(1)">click</a>'), '<a>click</a>');
   assert.equal(
     sanitizeNoteHtmlMain(
-      '<noscript><img src=x onerror=alert(1)></noscript><template><script>alert(1)</script></template><svg><onload=alert(1)></svg><math><mtext><script>alert(1)</script></mtext></math><p>Clean</p>'
+      '<noscript><img src=x onerror=alert(1)></noscript><template><script>alert(1)</script></template><svg onload=alert(1)><foreignObject><p><script>1</script>Hidden</p></foreignObject></svg><math><mtext><script>alert(1)</script></mtext></math><p>Clean</p>'
     ),
     '<p>Clean</p>'
   );
+
+  // Dropped rawtext / legacy containers
+  assert.equal(
+    sanitizeNoteHtmlMain(
+      '<xmp><script>alert(1)</script></xmp><noembed><img src=x onerror=1></noembed><noframes><p>hidden</p></noframes><head><title>x</title></head><p>Visible</p><plaintext><script>alert(1)</script>'
+    ),
+    '<p>Visible</p>'
+  );
+
+  // Foster-parenting mXSS & sanitizer idempotency
+  const fosterPayload =
+    '<form><math><mtext></form><form><mglyph><style></math><img src onerror=alert(1)>';
+  const fosterOut = sanitizeNoteHtmlMain(fosterPayload);
+  assert.ok(!fosterOut.includes('<img') && !fosterOut.includes('<style'));
+  assert.equal(sanitizeNoteHtmlMain(fosterOut), fosterOut);
+
+  // Deeply nested HTML should not overflow the call stack
+  const deepHtml = '<div>'.repeat(10_000) + 'x' + '</div>'.repeat(10_000);
+  const deepOut = sanitizeNoteHtmlMain(deepHtml);
+  assert.equal(deepOut, deepHtml);
+  assert.ok(deepOut.includes('x'));
 
   // Malformed/interleaved nesting
   assert.equal(sanitizeNoteHtmlMain('<p><b>text</p></b>'), '<p><b>text</b></p>');

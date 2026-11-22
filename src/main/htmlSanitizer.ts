@@ -5,6 +5,8 @@
 
 import { type DefaultTreeAdapterTypes, html, parseFragment } from 'parse5';
 
+const HTML_NS = html.NS.HTML;
+
 const ALLOWED_TAGS = new Set([
   'b',
   'strong',
@@ -39,6 +41,11 @@ const DROP_WITH_CONTENT_TAGS = new Set([
   'noscript',
   'textarea',
   'title',
+  'xmp',
+  'noembed',
+  'noframes',
+  'plaintext',
+  'head',
 ]);
 
 const ALLOWED_CLASSES = new Set([
@@ -145,43 +152,64 @@ function buildSanitizedOpenTag(tag: string, attrs: Map<string, string>): string 
   return outAttrs.length > 0 ? `<${tag} ${outAttrs.join(' ')}>` : `<${tag}>`;
 }
 
-function serializeNode(node: DefaultTreeAdapterTypes.ChildNode): string {
-  if (node.nodeName === '#text') {
-    return escapeText((node as DefaultTreeAdapterTypes.TextNode).value);
-  }
-  if (node.nodeName === '#comment' || node.nodeName === '#documentType') {
-    return '';
-  }
-
-  const element = node as DefaultTreeAdapterTypes.Element;
-  const tagName = element.tagName.toLowerCase();
-
-  if (element.namespaceURI !== html.NS.HTML || DROP_WITH_CONTENT_TAGS.has(tagName)) {
-    return '';
-  }
-
-  const childrenHtml = element.childNodes.map(serializeNode).join('');
-
-  if (!ALLOWED_TAGS.has(tagName)) {
-    return childrenHtml;
-  }
-
-  const attrs = toAttrMap(element.attrs);
-  const openTag = buildSanitizedOpenTag(tagName, attrs);
-  if (!openTag) {
-    return VOID_TAGS.has(tagName) ? '' : childrenHtml;
-  }
-
-  if (VOID_TAGS.has(tagName)) {
-    return openTag;
-  }
-
-  return `${openTag}${childrenHtml}</${tagName}>`;
-}
+type StackFrame =
+  { kind: 'node'; node: DefaultTreeAdapterTypes.ChildNode } | { kind: 'close'; tag: string };
 
 export function sanitizeNoteHtmlMain(rawHtml: string): string {
   if (!rawHtml) return '';
 
   const fragment = parseFragment(rawHtml);
-  return fragment.childNodes.map(serializeNode).join('');
+  const stack: StackFrame[] = [];
+  for (let i = fragment.childNodes.length - 1; i >= 0; i--) {
+    stack.push({ kind: 'node', node: fragment.childNodes[i] });
+  }
+
+  const out: string[] = [];
+
+  while (stack.length > 0) {
+    const frame = stack.pop()!;
+    if (frame.kind === 'close') {
+      out.push(`</${frame.tag}>`);
+      continue;
+    }
+
+    const { node } = frame;
+    if (node.nodeName === '#text') {
+      out.push(escapeText((node as DefaultTreeAdapterTypes.TextNode).value));
+      continue;
+    }
+    if (node.nodeName === '#comment' || node.nodeName === '#documentType') {
+      continue;
+    }
+
+    const element = node as DefaultTreeAdapterTypes.Element;
+    const tagName = element.tagName.toLowerCase();
+
+    if (element.namespaceURI !== HTML_NS || DROP_WITH_CONTENT_TAGS.has(tagName)) {
+      continue;
+    }
+
+    const isAllowed = ALLOWED_TAGS.has(tagName);
+    const isVoid = VOID_TAGS.has(tagName);
+
+    if (isAllowed) {
+      const openTag = buildSanitizedOpenTag(tagName, toAttrMap(element.attrs));
+      if (openTag) {
+        out.push(openTag);
+        if (!isVoid) {
+          stack.push({ kind: 'close', tag: tagName });
+        }
+      } else if (isVoid) {
+        continue;
+      }
+    }
+
+    if (!isVoid) {
+      for (let i = element.childNodes.length - 1; i >= 0; i--) {
+        stack.push({ kind: 'node', node: element.childNodes[i] });
+      }
+    }
+  }
+
+  return out.join('');
 }
