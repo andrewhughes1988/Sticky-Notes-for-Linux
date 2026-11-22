@@ -8,9 +8,10 @@ import {
 } from '../../shared/types';
 import { NoteCard } from './NoteCard';
 import { DeleteModal } from './DeleteModal';
+import { ManagerMenu } from './ManagerMenu';
 import { StickyNoteIcon } from './StickyNoteIcon';
 import { formatFriendlyDate } from '../utils/date';
-import { Plus, Search, X, Sun, Moon, Trash2, RotateCcw, Download } from 'lucide-react';
+import { Plus, Search, X, Settings, Trash2, RotateCcw } from 'lucide-react';
 
 const PAGE_SIZE = 40;
 
@@ -18,6 +19,7 @@ type ManagerTab = 'notes' | 'trash';
 
 export const ManagerView: React.FC = () => {
   const [activeTab, setActiveTab] = useState<ManagerTab>('notes');
+  const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [notes, setNotes] = useState<NotePreview[]>([]);
   const [deletedNotes, setDeletedNotes] = useState<DeletedNotePreview[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
@@ -46,6 +48,7 @@ export const ManagerView: React.FC = () => {
   const [revision, setRevision] = useState(0);
   const requestId = useRef(0);
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const menuButtonRef = useRef<HTMLButtonElement>(null);
   const restoreSearchFocus = useRef(false);
 
   const isDarkMode = themePref === 'dark' || (themePref === 'system' && systemDark);
@@ -125,7 +128,7 @@ export const ManagerView: React.FC = () => {
     };
   }, [activeTab, page, revision, searchQuery]);
 
-  // Load settings from SQLite + migrate legacy localStorage('manager_theme') once (Decision D2)
+  // Load settings from SQLite + migrate legacy localStorage('manager_theme') once
   useEffect(() => {
     let active = true;
     let receivedAutostart = false;
@@ -203,6 +206,7 @@ export const ManagerView: React.FC = () => {
           });
         } else if (key === 'f' && !event.shiftKey) {
           event.preventDefault();
+          setIsMenuOpen(false);
           setActiveTab('notes');
           setTimeout(() => searchInputRef.current?.focus(), 0);
         } else if (key === 'q' && !event.shiftKey) {
@@ -223,7 +227,7 @@ export const ManagerView: React.FC = () => {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [searchQuery]);
 
-  const handleAutostartChange = async (enabled: boolean) => {
+  const handleAutostartChange = useCallback(async (enabled: boolean) => {
     setIsUpdatingAutostart(true);
     setAutostartError(null);
     try {
@@ -234,9 +238,9 @@ export const ManagerView: React.FC = () => {
     } finally {
       setIsUpdatingAutostart(false);
     }
-  };
+  }, []);
 
-  const handleEncryptionChange = async (enabled: boolean) => {
+  const handleEncryptionChange = useCallback(async (enabled: boolean) => {
     setIsUpdatingEncryption(true);
     setActionError(null);
     setActionStatus(null);
@@ -251,9 +255,8 @@ export const ManagerView: React.FC = () => {
     } finally {
       setIsUpdatingEncryption(false);
     }
-  };
+  }, []);
 
-  // Keep previous results visible while debounced search runs (no flicker)
   const changeSearch = (value: string) => {
     if (value === searchQuery) return;
     setLoadError(false);
@@ -346,7 +349,7 @@ export const ManagerView: React.FC = () => {
     }
   };
 
-  const handleExport = async (format: 'json' | 'markdown') => {
+  const handleExport = useCallback(async (format: 'json' | 'markdown') => {
     setActionError(null);
     setActionStatus(null);
     try {
@@ -357,9 +360,9 @@ export const ManagerView: React.FC = () => {
     } catch {
       setActionError('Could not export notes.');
     }
-  };
+  }, []);
 
-  const handlePurgeBackups = async () => {
+  const handlePurgeBackups = useCallback(async () => {
     setActionError(null);
     setActionStatus(null);
     try {
@@ -369,7 +372,50 @@ export const ManagerView: React.FC = () => {
     } catch {
       setActionError('Could not remove pre-upgrade backups.');
     }
-  };
+  }, []);
+
+  const handleToggleTrashView = useCallback(() => {
+    setIsLoading(true);
+    setActiveTab((tab) => (tab === 'notes' ? 'trash' : 'notes'));
+  }, []);
+
+  const handleRetrySettings = useCallback(() => {
+    setSettingsRetry((value) => value + 1);
+  }, []);
+
+  const handleCloseMenu = useCallback(() => {
+    setIsMenuOpen(false);
+  }, []);
+
+  const handleExportJson = useCallback(() => {
+    void handleExport('json');
+  }, [handleExport]);
+
+  const handleExportMarkdown = useCallback(() => {
+    void handleExport('markdown');
+  }, [handleExport]);
+
+  const handleToggleThemeSync = useCallback(() => {
+    void toggleTheme();
+  }, [toggleTheme]);
+
+  const handleToggleAutostartSync = useCallback(
+    (enabled: boolean) => {
+      void handleAutostartChange(enabled);
+    },
+    [handleAutostartChange]
+  );
+
+  const handleToggleEncryptionSync = useCallback(
+    (enabled: boolean) => {
+      void handleEncryptionChange(enabled);
+    },
+    [handleEncryptionChange]
+  );
+
+  const handlePurgeBackupsSync = useCallback(() => {
+    void handlePurgeBackups();
+  }, [handlePurgeBackups]);
 
   useEffect(() => {
     if (noteToDelete === null && restoreSearchFocus.current) {
@@ -388,37 +434,16 @@ export const ManagerView: React.FC = () => {
 
         <div className="manager-controls app-no-drag">
           <button
+            ref={menuButtonRef}
             type="button"
-            className={`header-btn ${activeTab === 'trash' ? 'active' : ''}`}
-            aria-label={activeTab === 'trash' ? 'Back to notes' : 'Open Trash'}
-            aria-pressed={activeTab === 'trash'}
-            title={activeTab === 'trash' ? 'Back to notes' : 'Trash'}
-            onClick={() => {
-              setIsLoading(true);
-              setActiveTab((tab) => (tab === 'notes' ? 'trash' : 'notes'));
-            }}
+            className={`header-btn ${isMenuOpen ? 'active' : ''}`}
+            aria-label="Settings and actions"
+            aria-expanded={isMenuOpen}
+            aria-haspopup="dialog"
+            title="Settings &amp; menu"
+            onClick={() => setIsMenuOpen((open) => !open)}
           >
-            <Trash2 size={15} aria-hidden="true" />
-          </button>
-
-          <button
-            type="button"
-            className="header-btn"
-            aria-label="Export notes as JSON"
-            title="Export notes (JSON)"
-            onClick={() => void handleExport('json')}
-          >
-            <Download size={15} aria-hidden="true" />
-          </button>
-
-          <button
-            type="button"
-            className="header-btn"
-            aria-label={isDarkMode ? 'Switch to light mode' : 'Switch to dark mode'}
-            title={isDarkMode ? 'Switch to light mode' : 'Switch to dark mode'}
-            onClick={() => void toggleTheme()}
-          >
-            {isDarkMode ? <Sun size={15} aria-hidden="true" /> : <Moon size={15} aria-hidden="true" />}
+            <Settings size={15} aria-hidden="true" />
           </button>
 
           <button
@@ -437,6 +462,29 @@ export const ManagerView: React.FC = () => {
           </button>
         </div>
       </header>
+
+      {isMenuOpen && (
+        <ManagerMenu
+          isDarkMode={isDarkMode}
+          isTrashView={activeTab === 'trash'}
+          autostart={autostart}
+          isUpdatingAutostart={isUpdatingAutostart}
+          autostartError={autostartError}
+          encryption={encryption}
+          isUpdatingEncryption={isUpdatingEncryption}
+          backupCount={backupCount}
+          triggerRef={menuButtonRef}
+          onToggleTheme={handleToggleThemeSync}
+          onToggleAutostart={handleToggleAutostartSync}
+          onRetrySettings={handleRetrySettings}
+          onToggleEncryption={handleToggleEncryptionSync}
+          onToggleTrashView={handleToggleTrashView}
+          onExportJson={handleExportJson}
+          onExportMarkdown={handleExportMarkdown}
+          onPurgeBackups={handlePurgeBackupsSync}
+          onClose={handleCloseMenu}
+        />
+      )}
 
       {activeTab === 'notes' ? (
         <div className="manager-search-bar app-no-drag">
@@ -525,22 +573,11 @@ export const ManagerView: React.FC = () => {
           {actionStatus}
         </p>
       )}
-      {backupCount > 0 && (
-        <div className="manager-backup-notice app-no-drag" role="status">
-          <span>
-            {backupCount} pre-upgrade backup{backupCount === 1 ? '' : 's'} kept on disk.
-          </span>
-          <button
-            type="button"
-            className="inline-retry-btn"
-            onClick={() => void handlePurgeBackups()}
-          >
-            Remove backups
-          </button>
-        </div>
-      )}
 
-      <main className="manager-notes-list app-no-drag" aria-label={activeTab === 'notes' ? 'Notes' : 'Trash'}>
+      <main
+        className="manager-notes-list app-no-drag"
+        aria-label={activeTab === 'notes' ? 'Notes' : 'Trash'}
+      >
         {loadError && (
           <div className="manager-status">
             <span role="alert">Could not load notes.</span>
@@ -640,56 +677,8 @@ export const ManagerView: React.FC = () => {
           })}
       </main>
 
-      <footer className="manager-footer app-no-drag">
-        <label className="manager-autostart">
-          <input
-            type="checkbox"
-            checked={autostart ?? false}
-            disabled={autostart === null || isUpdatingAutostart}
-            onChange={(event) => void handleAutostartChange(event.target.checked)}
-          />
-          Start at login
-        </label>
-        {encryption && (
-          <label
-            className="manager-autostart"
-            title={
-              encryption.available
-                ? `Encrypt notes at rest using OS keyring (${encryption.backend})`
-                : 'Requires a desktop OS keyring (e.g. KWallet or GNOME Keyring)'
-            }
-          >
-            <input
-              type="checkbox"
-              checked={encryption.enabled}
-              disabled={(!encryption.available && !encryption.enabled) || isUpdatingEncryption}
-              onChange={(event) => void handleEncryptionChange(event.target.checked)}
-            />
-            Encrypt at rest
-          </label>
-        )}
-        <button
-          type="button"
-          className="footer-link-btn"
-          onClick={() => void handleExport('markdown')}
-        >
-          Export Markdown
-        </button>
-        {autostartError && (
-          <div className="manager-status">
-            <span role="alert">{autostartError}</span>
-            {autostart === null && (
-              <button
-                type="button"
-                className="modal-btn"
-                onClick={() => setSettingsRetry((value) => value + 1)}
-              >
-                Retry
-              </button>
-            )}
-          </div>
-        )}
-        {activeTab === 'notes' && (page > 0 || hasMore) && (
+      {activeTab === 'notes' && (page > 0 || hasMore) && (
+        <footer className="manager-footer app-no-drag">
           <nav className="manager-pagination" aria-label="Notes pages">
             <button
               type="button"
@@ -713,8 +702,8 @@ export const ManagerView: React.FC = () => {
               Next
             </button>
           </nav>
-        )}
-      </footer>
+        </footer>
+      )}
 
       <DeleteModal
         isOpen={noteToDelete !== null}

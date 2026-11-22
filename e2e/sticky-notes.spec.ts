@@ -100,13 +100,18 @@ test('full lifecycle: create, edit with Tiptap, search, Trash/restore, tray pers
     await searchInput.press('Escape');
     await expect(searchInput).toHaveValue('');
 
-    // 6. Soft-delete the second note to Trash, then restore it
+    // 6. Soft-delete the second note to Trash, then open unified Settings & actions menu -> Open Trash -> Restore
     await managerWindow.getByRole('button', { name: /Move note to Trash: Second Note To Trash/ }).click();
     await managerWindow.getByRole('button', { name: 'Move to Trash' }).click();
     await expect(
       managerWindow.getByRole('button', { name: /Open note: Second Note To Trash/ })
     ).toHaveCount(0);
 
+    await managerWindow.getByRole('button', { name: 'Settings and actions' }).click();
+    await expect(managerWindow.getByRole('switch', { name: 'Dark mode' })).toBeVisible();
+    await expect(managerWindow.getByRole('checkbox', { name: 'Start at login' })).toBeVisible();
+    await expect(managerWindow.getByRole('button', { name: 'Export as JSON' })).toBeVisible();
+    await expect(managerWindow.getByRole('button', { name: 'Export as Markdown' })).toBeVisible();
     await managerWindow.getByRole('button', { name: 'Open Trash' }).click();
     await expect(managerWindow.getByText('Second Note To Trash')).toBeVisible();
     await managerWindow.getByRole('button', { name: 'Restore' }).click();
