@@ -1,7 +1,11 @@
 /**
- * Pure TypeScript, zero-DOM main-process HTML allowlist sanitizer.
+ * Main-process HTML5 allowlist sanitizer using parse5.
  * Provides defense-in-depth before persisting renderer-supplied HTML to SQLite.
  */
+
+import { type DefaultTreeAdapterTypes, html, parseFragment } from 'parse5';
+
+const HTML_NS = html.NS.HTML;
 
 const ALLOWED_TAGS = new Set([
   'b',
@@ -37,6 +41,11 @@ const DROP_WITH_CONTENT_TAGS = new Set([
   'noscript',
   'textarea',
   'title',
+  'xmp',
+  'noembed',
+  'noframes',
+  'plaintext',
+  'head',
 ]);
 
 const ALLOWED_CLASSES = new Set([
@@ -67,6 +76,10 @@ export function parseSafeExternalUrl(raw: string): string | null {
   }
 }
 
+function escapeText(value: string): string {
+  return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
 function escapeAttr(value: string): string {
   return value
     .replace(/&/g, '&amp;')
@@ -75,43 +88,19 @@ function escapeAttr(value: string): string {
     .replace(/>/g, '&gt;');
 }
 
-function decodeHtmlEntities(value: string): string {
-  return value
-    .replace(/&#x([0-9a-f]+);?/gi, (_, hex: string) => {
-      const code = Number.parseInt(hex, 16);
-      return Number.isFinite(code) && code > 0 && code <= 0x10ffff
-        ? String.fromCodePoint(code)
-        : '';
-    })
-    .replace(/&#(\d+);?/g, (_, dec: string) => {
-      const code = Number.parseInt(dec, 10);
-      return Number.isFinite(code) && code > 0 && code <= 0x10ffff
-        ? String.fromCodePoint(code)
-        : '';
-    })
-    .replace(/&quot;/gi, '"')
-    .replace(/&#39;|&apos;/gi, "'")
-    .replace(/&lt;/gi, '<')
-    .replace(/&gt;/gi, '>')
-    .replace(/&amp;/gi, '&');
-}
-
-function parseAttributes(rawAttrString: string): Map<string, string> {
+function toAttrMap(rawAttrs: Array<{ name: string; value: string }>): Map<string, string> {
   const attrs = new Map<string, string>();
-  const attrRegex = /([^\s"'=<>`/]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/g;
-  let match: RegExpExecArray | null;
-  while ((match = attrRegex.exec(rawAttrString)) !== null) {
-    const name = match[1].toLowerCase();
-    const rawValue = match[2] ?? match[3] ?? match[4] ?? '';
-    attrs.set(name, decodeHtmlEntities(rawValue));
+  for (const attr of rawAttrs) {
+    const name = attr.name.toLowerCase();
+    if (!attrs.has(name)) {
+      attrs.set(name, attr.value);
+    }
   }
   return attrs;
 }
 
 function filterClasses(rawClass: string): string {
-  const kept = rawClass
-    .split(/\s+/)
-    .filter((token) => ALLOWED_CLASSES.has(token));
+  const kept = rawClass.split(/\s+/).filter((token) => ALLOWED_CLASSES.has(token));
   return [...new Set(kept)].join(' ');
 }
 
@@ -163,99 +152,64 @@ function buildSanitizedOpenTag(tag: string, attrs: Map<string, string>): string 
   return outAttrs.length > 0 ? `<${tag} ${outAttrs.join(' ')}>` : `<${tag}>`;
 }
 
+type StackFrame =
+  { kind: 'node'; node: DefaultTreeAdapterTypes.ChildNode } | { kind: 'close'; tag: string };
+
 export function sanitizeNoteHtmlMain(rawHtml: string): string {
   if (!rawHtml) return '';
 
-  // Remove HTML comments first
-  const withoutComments = rawHtml.replace(/<!--[\s\S]*?-->/g, '');
-  let result = '';
-  let index = 0;
-  let skippingTag: string | null = null;
-  let skippingDepth = 0;
-  const openStack: string[] = [];
+  const fragment = parseFragment(rawHtml);
+  const stack: StackFrame[] = [];
+  for (let i = fragment.childNodes.length - 1; i >= 0; i--) {
+    stack.push({ kind: 'node', node: fragment.childNodes[i] });
+  }
 
-  while (index < withoutComments.length) {
-    const lt = withoutComments.indexOf('<', index);
-    if (lt === -1) {
-      if (!skippingTag) result += withoutComments.slice(index);
-      break;
+  const out: string[] = [];
+
+  while (stack.length > 0) {
+    const frame = stack.pop()!;
+    if (frame.kind === 'close') {
+      out.push(`</${frame.tag}>`);
+      continue;
     }
 
-    if (lt > index && !skippingTag) {
-      result += withoutComments.slice(index, lt);
+    const { node } = frame;
+    if (node.nodeName === '#text') {
+      out.push(escapeText((node as DefaultTreeAdapterTypes.TextNode).value));
+      continue;
+    }
+    if (node.nodeName === '#comment' || node.nodeName === '#documentType') {
+      continue;
     }
 
-    const gt = withoutComments.indexOf('>', lt + 1);
-    if (gt === -1) {
-      // Unterminated tag — escape safely as text
-      if (!skippingTag) result += '&lt;' + withoutComments.slice(lt + 1);
-      break;
+    const element = node as DefaultTreeAdapterTypes.Element;
+    const tagName = element.tagName.toLowerCase();
+
+    if (element.namespaceURI !== HTML_NS || DROP_WITH_CONTENT_TAGS.has(tagName)) {
+      continue;
     }
 
-    const rawTagBody = withoutComments.slice(lt + 1, gt).trim();
-    index = gt + 1;
+    const isAllowed = ALLOWED_TAGS.has(tagName);
+    const isVoid = VOID_TAGS.has(tagName);
 
-    if (!rawTagBody) continue;
-
-    const isClosing = rawTagBody.startsWith('/');
-    const tagMatch = /^\/?\s*([a-zA-Z][a-zA-Z0-9:-]*)(?:\s+([\s\S]*))?$/.exec(rawTagBody);
-    if (!tagMatch) continue;
-
-    const tagName = tagMatch[1].toLowerCase();
-    const attrPart = (tagMatch[2] || '').replace(/\/\s*$/, '').trim();
-
-    if (skippingTag) {
-      if (tagName === skippingTag) {
-        if (isClosing) {
-          skippingDepth--;
-          if (skippingDepth <= 0) {
-            skippingTag = null;
-            skippingDepth = 0;
-          }
-        } else if (!rawTagBody.endsWith('/')) {
-          skippingDepth++;
+    if (isAllowed) {
+      const openTag = buildSanitizedOpenTag(tagName, toAttrMap(element.attrs));
+      if (openTag) {
+        out.push(openTag);
+        if (!isVoid) {
+          stack.push({ kind: 'close', tag: tagName });
         }
+      } else if (isVoid) {
+        continue;
       }
-      continue;
     }
 
-    if (!isClosing && DROP_WITH_CONTENT_TAGS.has(tagName)) {
-      if (!rawTagBody.endsWith('/')) {
-        skippingTag = tagName;
-        skippingDepth = 1;
+    if (!isVoid) {
+      for (let i = element.childNodes.length - 1; i >= 0; i--) {
+        stack.push({ kind: 'node', node: element.childNodes[i] });
       }
-      continue;
-    }
-
-    if (!ALLOWED_TAGS.has(tagName)) {
-      continue;
-    }
-
-    if (isClosing) {
-      if (VOID_TAGS.has(tagName)) continue;
-      const stackIdx = openStack.lastIndexOf(tagName);
-      if (stackIdx !== -1) {
-        while (openStack.length > stackIdx) {
-          const popped = openStack.pop()!;
-          result += `</${popped}>`;
-        }
-      }
-      continue;
-    }
-
-    const attrs = parseAttributes(attrPart);
-    const sanitizedTag = buildSanitizedOpenTag(tagName, attrs);
-    if (!sanitizedTag) continue;
-
-    result += sanitizedTag;
-    if (!VOID_TAGS.has(tagName)) {
-      openStack.push(tagName);
     }
   }
 
-  while (openStack.length > 0) {
-    result += `</${openStack.pop()!}>`;
-  }
-
-  return result;
+  return out.join('');
 }
