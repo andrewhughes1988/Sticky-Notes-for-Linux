@@ -42,8 +42,8 @@ Download the latest `.deb` or `.AppImage` release from the **[GitHub Releases](h
 
 - **Universal Linux (`.AppImage`):**
   ```bash
-  chmod +x "Sticky Notes-1.1.0.AppImage"
-  ./"Sticky Notes-1.1.0.AppImage"
+  chmod +x Sticky.Notes-1.1.0.AppImage
+  ./Sticky.Notes-1.1.0.AppImage
   ```
 
 ---
