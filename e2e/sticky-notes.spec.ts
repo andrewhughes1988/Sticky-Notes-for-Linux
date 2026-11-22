@@ -109,7 +109,7 @@ test('full lifecycle: create, edit with Tiptap, search, Trash/restore, tray pers
 
     await managerWindow.getByRole('button', { name: 'Settings and actions' }).click();
     await expect(managerWindow.getByRole('switch', { name: 'Dark mode' })).toBeVisible();
-    await expect(managerWindow.getByRole('checkbox', { name: 'Start at login' })).toBeVisible();
+    await expect(managerWindow.getByRole('switch', { name: 'Start at login' })).toBeVisible();
     await expect(managerWindow.getByRole('button', { name: 'Export as JSON' })).toBeVisible();
     await expect(managerWindow.getByRole('button', { name: 'Export as Markdown' })).toBeVisible();
     await managerWindow.getByRole('button', { name: 'Open Trash' }).click();

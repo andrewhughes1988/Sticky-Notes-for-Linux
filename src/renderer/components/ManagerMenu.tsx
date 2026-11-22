@@ -48,7 +48,7 @@ const ManagerMenuComponent: React.FC<ManagerMenuProps> = ({
   useLayoutEffect(() => {
     const trigger = triggerRef.current ?? document.activeElement;
     const popover = popoverRef.current;
-    popover?.querySelector<HTMLElement>('button, input:not(:disabled)')?.focus();
+    popover?.querySelector<HTMLElement>('button:not(:disabled)')?.focus();
 
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
@@ -103,18 +103,20 @@ const ManagerMenuComponent: React.FC<ManagerMenuProps> = ({
           <span className={`menu-switch-pill ${isDarkMode ? 'on' : ''}`} aria-hidden="true" />
         </button>
 
-        <label className="manager-menu-item manager-menu-checkbox-item">
+        <button
+          type="button"
+          className="manager-menu-item manager-menu-toggle-item"
+          role="switch"
+          aria-checked={autostart ?? false}
+          disabled={autostart === null || isUpdatingAutostart}
+          onClick={() => onToggleAutostart(!(autostart ?? false))}
+        >
           <span className="manager-menu-item-left">
             <Power size={15} aria-hidden="true" />
             <span>Start at login</span>
           </span>
-          <input
-            type="checkbox"
-            checked={autostart ?? false}
-            disabled={autostart === null || isUpdatingAutostart}
-            onChange={(event) => onToggleAutostart(event.target.checked)}
-          />
-        </label>
+          <span className={`menu-switch-pill ${autostart ? 'on' : ''}`} aria-hidden="true" />
+        </button>
 
         {autostartError && (
           <div className="manager-menu-inline-error" role="alert">
@@ -128,27 +130,28 @@ const ManagerMenuComponent: React.FC<ManagerMenuProps> = ({
         )}
 
         {encryption && (
-          <label
-            className={`manager-menu-item manager-menu-checkbox-item ${
-              !encryption.available && !encryption.enabled ? 'is-disabled' : ''
-            }`}
+          <button
+            type="button"
+            className="manager-menu-item manager-menu-toggle-item"
+            role="switch"
+            aria-checked={encryption.enabled}
+            disabled={(!encryption.available && !encryption.enabled) || isUpdatingEncryption}
             title={
               encryption.available
                 ? `Encrypt notes at rest using OS keyring (${encryption.backend})`
                 : 'Requires a desktop OS keyring (e.g., KWallet or GNOME Keyring)'
             }
+            onClick={() => onToggleEncryption(!encryption.enabled)}
           >
             <span className="manager-menu-item-left">
               <Lock size={15} aria-hidden="true" />
               <span>Encrypt at rest</span>
             </span>
-            <input
-              type="checkbox"
-              checked={encryption.enabled}
-              disabled={(!encryption.available && !encryption.enabled) || isUpdatingEncryption}
-              onChange={(event) => onToggleEncryption(event.target.checked)}
+            <span
+              className={`menu-switch-pill ${encryption.enabled ? 'on' : ''}`}
+              aria-hidden="true"
             />
-          </label>
+          </button>
         )}
 
         <div className="color-menu-divider" />
