@@ -1,7 +1,9 @@
 /**
- * Pure TypeScript, zero-DOM main-process HTML allowlist sanitizer.
+ * Main-process HTML5 allowlist sanitizer using parse5.
  * Provides defense-in-depth before persisting renderer-supplied HTML to SQLite.
  */
+
+import { type DefaultTreeAdapterTypes, html, parseFragment } from 'parse5';
 
 const ALLOWED_TAGS = new Set([
   'b',
@@ -67,6 +69,10 @@ export function parseSafeExternalUrl(raw: string): string | null {
   }
 }
 
+function escapeText(value: string): string {
+  return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
 function escapeAttr(value: string): string {
   return value
     .replace(/&/g, '&amp;')
@@ -75,43 +81,19 @@ function escapeAttr(value: string): string {
     .replace(/>/g, '&gt;');
 }
 
-function decodeHtmlEntities(value: string): string {
-  return value
-    .replace(/&#x([0-9a-f]+);?/gi, (_, hex: string) => {
-      const code = Number.parseInt(hex, 16);
-      return Number.isFinite(code) && code > 0 && code <= 0x10ffff
-        ? String.fromCodePoint(code)
-        : '';
-    })
-    .replace(/&#(\d+);?/g, (_, dec: string) => {
-      const code = Number.parseInt(dec, 10);
-      return Number.isFinite(code) && code > 0 && code <= 0x10ffff
-        ? String.fromCodePoint(code)
-        : '';
-    })
-    .replace(/&quot;/gi, '"')
-    .replace(/&#39;|&apos;/gi, "'")
-    .replace(/&lt;/gi, '<')
-    .replace(/&gt;/gi, '>')
-    .replace(/&amp;/gi, '&');
-}
-
-function parseAttributes(rawAttrString: string): Map<string, string> {
+function toAttrMap(rawAttrs: Array<{ name: string; value: string }>): Map<string, string> {
   const attrs = new Map<string, string>();
-  const attrRegex = /([^\s"'=<>`/]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/g;
-  let match: RegExpExecArray | null;
-  while ((match = attrRegex.exec(rawAttrString)) !== null) {
-    const name = match[1].toLowerCase();
-    const rawValue = match[2] ?? match[3] ?? match[4] ?? '';
-    attrs.set(name, decodeHtmlEntities(rawValue));
+  for (const attr of rawAttrs) {
+    const name = attr.name.toLowerCase();
+    if (!attrs.has(name)) {
+      attrs.set(name, attr.value);
+    }
   }
   return attrs;
 }
 
 function filterClasses(rawClass: string): string {
-  const kept = rawClass
-    .split(/\s+/)
-    .filter((token) => ALLOWED_CLASSES.has(token));
+  const kept = rawClass.split(/\s+/).filter((token) => ALLOWED_CLASSES.has(token));
   return [...new Set(kept)].join(' ');
 }
 
@@ -163,99 +145,43 @@ function buildSanitizedOpenTag(tag: string, attrs: Map<string, string>): string 
   return outAttrs.length > 0 ? `<${tag} ${outAttrs.join(' ')}>` : `<${tag}>`;
 }
 
+function serializeNode(node: DefaultTreeAdapterTypes.ChildNode): string {
+  if (node.nodeName === '#text') {
+    return escapeText((node as DefaultTreeAdapterTypes.TextNode).value);
+  }
+  if (node.nodeName === '#comment' || node.nodeName === '#documentType') {
+    return '';
+  }
+
+  const element = node as DefaultTreeAdapterTypes.Element;
+  const tagName = element.tagName.toLowerCase();
+
+  if (element.namespaceURI !== html.NS.HTML || DROP_WITH_CONTENT_TAGS.has(tagName)) {
+    return '';
+  }
+
+  const childrenHtml = element.childNodes.map(serializeNode).join('');
+
+  if (!ALLOWED_TAGS.has(tagName)) {
+    return childrenHtml;
+  }
+
+  const attrs = toAttrMap(element.attrs);
+  const openTag = buildSanitizedOpenTag(tagName, attrs);
+  if (!openTag) {
+    return VOID_TAGS.has(tagName) ? '' : childrenHtml;
+  }
+
+  if (VOID_TAGS.has(tagName)) {
+    return openTag;
+  }
+
+  return `${openTag}${childrenHtml}</${tagName}>`;
+}
+
 export function sanitizeNoteHtmlMain(rawHtml: string): string {
   if (!rawHtml) return '';
 
-  // Remove HTML comments first
-  const withoutComments = rawHtml.replace(/<!--[\s\S]*?-->/g, '');
-  let result = '';
-  let index = 0;
-  let skippingTag: string | null = null;
-  let skippingDepth = 0;
-  const openStack: string[] = [];
-
-  while (index < withoutComments.length) {
-    const lt = withoutComments.indexOf('<', index);
-    if (lt === -1) {
-      if (!skippingTag) result += withoutComments.slice(index);
-      break;
-    }
-
-    if (lt > index && !skippingTag) {
-      result += withoutComments.slice(index, lt);
-    }
-
-    const gt = withoutComments.indexOf('>', lt + 1);
-    if (gt === -1) {
-      // Unterminated tag — escape safely as text
-      if (!skippingTag) result += '&lt;' + withoutComments.slice(lt + 1);
-      break;
-    }
-
-    const rawTagBody = withoutComments.slice(lt + 1, gt).trim();
-    index = gt + 1;
-
-    if (!rawTagBody) continue;
-
-    const isClosing = rawTagBody.startsWith('/');
-    const tagMatch = /^\/?\s*([a-zA-Z][a-zA-Z0-9:-]*)(?:\s+([\s\S]*))?$/.exec(rawTagBody);
-    if (!tagMatch) continue;
-
-    const tagName = tagMatch[1].toLowerCase();
-    const attrPart = (tagMatch[2] || '').replace(/\/\s*$/, '').trim();
-
-    if (skippingTag) {
-      if (tagName === skippingTag) {
-        if (isClosing) {
-          skippingDepth--;
-          if (skippingDepth <= 0) {
-            skippingTag = null;
-            skippingDepth = 0;
-          }
-        } else if (!rawTagBody.endsWith('/')) {
-          skippingDepth++;
-        }
-      }
-      continue;
-    }
-
-    if (!isClosing && DROP_WITH_CONTENT_TAGS.has(tagName)) {
-      if (!rawTagBody.endsWith('/')) {
-        skippingTag = tagName;
-        skippingDepth = 1;
-      }
-      continue;
-    }
-
-    if (!ALLOWED_TAGS.has(tagName)) {
-      continue;
-    }
-
-    if (isClosing) {
-      if (VOID_TAGS.has(tagName)) continue;
-      const stackIdx = openStack.lastIndexOf(tagName);
-      if (stackIdx !== -1) {
-        while (openStack.length > stackIdx) {
-          const popped = openStack.pop()!;
-          result += `</${popped}>`;
-        }
-      }
-      continue;
-    }
-
-    const attrs = parseAttributes(attrPart);
-    const sanitizedTag = buildSanitizedOpenTag(tagName, attrs);
-    if (!sanitizedTag) continue;
-
-    result += sanitizedTag;
-    if (!VOID_TAGS.has(tagName)) {
-      openStack.push(tagName);
-    }
-  }
-
-  while (openStack.length > 0) {
-    result += `</${openStack.pop()!}>`;
-  }
-
-  return result;
+  const fragment = parseFragment(rawHtml);
+  return fragment.childNodes.map(serializeNode).join('');
 }
