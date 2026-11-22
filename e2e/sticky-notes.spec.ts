@@ -37,18 +37,26 @@ interface CspViolation {
   sourceFile: string;
 }
 
-async function attachCspMonitor(app: ElectronApplication): Promise<void> {
-  await app.context().addInitScript(() => {
-    const win = window as unknown as { __cspViolations?: CspViolation[] };
-    win.__cspViolations = [];
-    window.addEventListener('securitypolicyviolation', (event) => {
-      win.__cspViolations?.push({
-        violatedDirective: event.violatedDirective,
-        effectiveDirective: event.effectiveDirective,
-        sourceFile: event.sourceFile,
-      });
+function installCspMonitor(): void {
+  const win = window as unknown as { __cspViolations?: CspViolation[] };
+  win.__cspViolations = [];
+  window.addEventListener('securitypolicyviolation', (event) => {
+    win.__cspViolations?.push({
+      violatedDirective: event.violatedDirective,
+      effectiveDirective: event.effectiveDirective,
+      sourceFile: event.sourceFile,
     });
   });
+}
+
+async function attachCspMonitor(app: ElectronApplication): Promise<void> {
+  await app.context().addInitScript(installCspMonitor);
+}
+
+async function ensureFirstWindowCspMonitor(page: Page): Promise<void> {
+  await page.addInitScript(installCspMonitor);
+  await page.reload();
+  await page.waitForLoadState('domcontentloaded');
 }
 
 function trackConsoleErrors(page: Page, errors: string[]): void {
@@ -61,9 +69,10 @@ function trackConsoleErrors(page: Page, errors: string[]): void {
 
 async function assertNoCspViolations(page: Page, label: string): Promise<void> {
   const violations = await page.evaluate(() => {
-    const win = window as unknown as { __cspViolations?: CspViolation[] };
-    return win.__cspViolations ?? [];
+    const win = window as unknown as { __cspViolations?: unknown };
+    return win.__cspViolations;
   });
+  expect(Array.isArray(violations), `CSP monitor was not active in ${label}`).toBe(true);
   expect(violations, `CSP violations in ${label}`).toEqual([]);
 }
 
@@ -77,7 +86,7 @@ test('full lifecycle: create, edit with Tiptap, search, Trash/restore, tray pers
     await attachCspMonitor(app);
     const noteWindow: Page = await app.firstWindow();
     trackConsoleErrors(noteWindow, consoleErrors);
-    await noteWindow.waitForLoadState('domcontentloaded');
+    await ensureFirstWindowCspMonitor(noteWindow);
 
     // 1. Verify accessible header & formatting toolbar buttons on initial Welcome note
     const editor = noteWindow.getByRole('textbox', { name: 'Note text' });
@@ -185,7 +194,7 @@ test('full lifecycle: create, edit with Tiptap, search, Trash/restore, tray pers
     await attachCspMonitor(app);
     const restoredWindow = await app.firstWindow();
     trackConsoleErrors(restoredWindow, consoleErrors);
-    await restoredWindow.waitForLoadState('domcontentloaded');
+    await ensureFirstWindowCspMonitor(restoredWindow);
     await expect(restoredWindow.getByRole('textbox', { name: 'Note text' })).toContainText(
       'Playwright E2E Checklist Item'
     );

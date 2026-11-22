@@ -169,7 +169,7 @@ export const NoteView: React.FC<NoteViewProps> = ({ noteId }) => {
     <div
       ref={container}
       className={`note-container ${isDark ? 'dark' : ''}`}
-      data-color={activeColor}
+      data-color={currentTheme.id}
     >
       {/* Header Bar */}
       <div className="note-header-wrapper">

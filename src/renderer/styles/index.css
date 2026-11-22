@@ -168,6 +168,21 @@ html, body, #root {
 }
 
 /* Note Color Themes (kept in sync with NOTE_COLORS in src/shared/types.ts) */
+:where(.note-container, .note-card) {
+  --theme-header: #FFF176;
+  --theme-header-text: #202020;
+  --theme-header-border: #E6D05E;
+  --header-btn-hover: rgba(0, 0, 0, 0.08);
+  --header-btn-active: rgba(0, 0, 0, 0.16);
+  --theme-border: #E6D05E;
+  --theme-body: #FFF7D1;
+  --theme-text: #202020;
+  --theme-placeholder: #6B6323;
+  --theme-toolbar-bg: transparent;
+  --theme-btn-hover: rgba(0, 0, 0, 0.08);
+  --theme-btn-active: rgba(0, 0, 0, 0.16);
+}
+
 :where(.note-container, .note-card)[data-color="yellow"] {
   --theme-header: #FFF176;
   --theme-header-text: #202020;
