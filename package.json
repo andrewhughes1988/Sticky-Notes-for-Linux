@@ -114,10 +114,7 @@
       "category": "Utility",
       "icon": "build/icons",
       "executableName": "sticky-notes-linux",
-      "executableArgs": [
-        "--ozone-platform=x11",
-        "--class=com.netsysprep.stickynotes"
-      ],
+      "executableArgs": [],
       "desktop": {
         "entry": {
           "Icon": "com.netsysprep.stickynotes",
@@ -129,10 +126,7 @@
     },
     "appImage": {
       "artifactName": "Sticky.Notes-${version}.${ext}",
-      "executableArgs": [
-        "--ozone-platform=x11",
-        "--class=com.netsysprep.stickynotes"
-      ]
+      "executableArgs": []
     },
     "deb": {
       "packageName": "sticky-notes-linux",

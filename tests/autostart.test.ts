@@ -36,7 +36,7 @@ test('Linux autostart writes separate, escaped desktop entry arguments', (contex
   assert.equal(manager.isEnabled(), true);
   assert.equal(
     readExec(),
-    String.raw`Exec=/usr/bin/env -- "/tmp/Sticky Notes \\"Dollar\\$\\" Back\\\\slash 100%%.AppImage" "--ozone-platform=x11" "--class=com.netsysprep.stickynotes" --autostart`,
+    String.raw`Exec=/usr/bin/env -- "/tmp/Sticky Notes \\"Dollar\\$\\" Back\\\\slash 100%%.AppImage" --autostart`,
   );
 
   delete process.env.DISPLAY;

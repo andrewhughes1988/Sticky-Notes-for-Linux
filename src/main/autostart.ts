@@ -16,7 +16,9 @@ function getAutostartCommand(): string[] {
   if (process.defaultApp && process.argv[1]) {
     return [process.execPath, path.resolve(process.argv[1])];
   }
-  return [process.execPath];
+  return [process.execPath.endsWith('/sticky-notes-linux.bin')
+    ? process.execPath.slice(0, -4)
+    : process.execPath];
 }
 
 function escapeExecArgument(argument: string): string {
@@ -74,7 +76,8 @@ export class AutostartManager {
     }
     // GLib checks the executable path before expanding escaped percent characters.
     const argv = command[0].includes('%') ? ['/usr/bin/env', '--', ...command] : command;
-    const launchArgs = buildLinuxLaunchArgs(process.env);
+    const wrapped = Boolean(process.env.APPIMAGE) || command[0].endsWith('/sticky-notes-linux');
+    const launchArgs = wrapped ? [] : buildLinuxLaunchArgs(process.env);
     const exec = [...argv, ...launchArgs, '--autostart'].map(escapeExecArgument).join(' ');
     const desktopEntry = `[Desktop Entry]
 Type=Application

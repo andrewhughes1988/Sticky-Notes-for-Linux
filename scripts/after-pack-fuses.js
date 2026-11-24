@@ -1,4 +1,5 @@
 const path = require('node:path');
+const fs = require('node:fs/promises');
 const { flipFuses, FuseVersion, FuseV1Options } = require('@electron/fuses');
 
 /**
@@ -20,4 +21,10 @@ exports.default = async function afterPack(context) {
     [FuseV1Options.EnableEmbeddedAsarIntegrityValidation]: true,
     [FuseV1Options.OnlyLoadAppFromAsar]: true,
   });
+
+  if (context.electronPlatformName === 'linux') {
+    await fs.rename(electronBinaryPath, `${electronBinaryPath}.bin`);
+    await fs.copyFile(path.join(context.packager.projectDir, 'build', 'launch.sh'), electronBinaryPath);
+    await fs.chmod(electronBinaryPath, 0o755);
+  }
 };
