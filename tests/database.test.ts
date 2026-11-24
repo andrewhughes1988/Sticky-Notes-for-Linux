@@ -174,15 +174,16 @@ test('Search excerpts, Unicode folding, short-term search, and metadata isolatio
 test('Settings defaults, corrupt JSON resilience, and manager bounds persistence', () => {
   const dbService = new DatabaseService(':memory:');
   try {
-    assert.deepEqual(dbService.getAllSettings(), { theme: 'system', autostart: true });
+    assert.deepEqual(dbService.getAllSettings(), { theme: 'system', autostart: true, spellcheck: false });
     dbService.setSetting('theme', 'dark');
     dbService.setSetting('autostart', false);
-    assert.deepEqual(dbService.getAllSettings(), { theme: 'dark', autostart: false });
+    dbService.setSetting('spellcheck', true);
+    assert.deepEqual(dbService.getAllSettings(), { theme: 'dark', autostart: false, spellcheck: true });
 
     // Inject corrupt setting row and ensure defaults still merge safely
     const rawDb = (dbService as unknown as { db: Database.Database }).db;
     rawDb.prepare("UPDATE settings SET value = '{invalid json' WHERE key = 'theme'").run();
-    assert.deepEqual(dbService.getAllSettings(), { theme: 'system', autostart: false });
+    assert.deepEqual(dbService.getAllSettings(), { theme: 'system', autostart: false, spellcheck: true });
 
     assert.equal(dbService.getManagerBounds(), null);
     dbService.setManagerBounds({ x: 120, y: 140, width: 420, height: 680 });

@@ -92,7 +92,17 @@ test('full lifecycle: create, edit with Tiptap, search, Trash/restore, tray pers
     const editor = noteWindow.getByRole('textbox', { name: 'Note text' });
     await expect(editor).toBeVisible();
     await expect(noteWindow.getByRole('button', { name: 'New note' })).toBeVisible();
-    await expect(noteWindow.getByRole('toolbar', { name: 'Text formatting' })).toBeVisible();
+    const toolbar = noteWindow.getByRole('toolbar', { name: 'Text formatting' });
+    await expect(toolbar).toBeVisible();
+    await toolbar.getByRole('button', { name: 'Bold' }).focus();
+    await noteWindow.keyboard.press('ArrowRight');
+    await expect(toolbar.getByRole('button', { name: 'Italic' })).toBeFocused();
+    await noteWindow.keyboard.press('End');
+    await expect(toolbar.getByRole('button', { name: 'Checklist' })).toBeFocused();
+    await noteWindow.keyboard.press('Home');
+    await expect(toolbar.getByRole('button', { name: 'Bold' })).toBeFocused();
+    await expect(toolbar.locator('button[tabindex="0"]')).toHaveCount(1);
+    await expect(editor).toHaveAttribute('spellcheck', 'false');
 
     // 1b. Toggle Pin Always-on-Top and verify BrowserWindow.isAlwaysOnTop() updates in main process
     const pinButton = noteWindow.getByRole('button', { name: 'Pin always on top' });
@@ -113,7 +123,7 @@ test('full lifecycle: create, edit with Tiptap, search, Trash/restore, tray pers
     await noteWindow.keyboard.press('Control+a');
     await noteWindow.keyboard.press('Backspace');
     await noteWindow.keyboard.type('Playwright E2E Checklist Item');
-    await noteWindow.getByRole('button', { name: 'Checklist' }).click();
+    await noteWindow.keyboard.press('Control+Shift+7');
     await expect(
       noteWindow.locator('ul[data-type="taskList"] input[type="checkbox"]')
     ).toBeVisible();
@@ -175,6 +185,11 @@ test('full lifecycle: create, edit with Tiptap, search, Trash/restore, tray pers
     await darkModeSwitch.click();
     await expect(managerWindow.locator('.manager-container')).not.toHaveClass(/dark/);
     await expect(managerWindow.getByRole('switch', { name: 'Start at login' })).toBeVisible();
+    const spellcheckSwitch = managerWindow.getByRole('switch', { name: 'Spellcheck' });
+    await expect(spellcheckSwitch).toHaveAttribute('aria-checked', 'false');
+    await spellcheckSwitch.click();
+    await expect(spellcheckSwitch).toHaveAttribute('aria-checked', 'true');
+    await expect(editor).toHaveAttribute('spellcheck', 'true');
     await expect(managerWindow.getByRole('button', { name: 'Export as JSON' })).toBeVisible();
     await expect(managerWindow.getByRole('button', { name: 'Export as Markdown' })).toBeVisible();
     await managerWindow.getByRole('button', { name: 'Open Trash' }).click();
@@ -198,6 +213,7 @@ test('full lifecycle: create, edit with Tiptap, search, Trash/restore, tray pers
     await expect(restoredWindow.getByRole('textbox', { name: 'Note text' })).toContainText(
       'Playwright E2E Checklist Item'
     );
+    await expect(restoredWindow.getByRole('textbox', { name: 'Note text' })).toHaveAttribute('spellcheck', 'true');
     await assertNoCspViolations(restoredWindow, 'restoredWindow');
     expect(consoleErrors, 'Console errors during E2E run').toEqual([]);
   } finally {

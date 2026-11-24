@@ -8,6 +8,7 @@ import Placeholder from '@tiptap/extension-placeholder';
 import { Autosave, AutosaveTimer } from '../utils/autosave';
 import { sanitizeHtml, upgradeLegacyChecklistHtml } from '../utils/sanitize';
 import { ActiveFormatFlags } from './EditorToolbar';
+import { strings } from '../strings';
 
 const compositionPending = new Error('Finish composing text before closing this note.');
 
@@ -19,6 +20,7 @@ export interface RichEditorHandle {
 
 interface RichEditorProps {
   initialHtml: string;
+  spellcheck: boolean;
   placeholder?: string;
   containerRef: React.RefObject<HTMLDivElement>;
   onChange: (html: string, plainText: string) => Promise<void>;
@@ -33,6 +35,7 @@ const StickyShortcuts = Extension.create({
       'Mod-t': () => this.editor.commands.toggleStrike(),
       'Mod-Shift-x': () => this.editor.commands.toggleStrike(),
       'Mod-Shift-l': () => this.editor.commands.toggleBulletList(),
+      'Mod-Shift-7': () => this.editor.commands.toggleTaskList(),
       'Mod-y': () => this.editor.commands.redo(),
     };
   },
@@ -129,6 +132,7 @@ const StickyTaskItem = TaskItem.extend({
 
 export const RichEditor: React.FC<RichEditorProps> = ({
   initialHtml,
+  spellcheck,
   placeholder = 'Take a note...',
   containerRef,
   onChange,
@@ -189,8 +193,8 @@ export const RichEditor: React.FC<RichEditorProps> = ({
         class: 'note-editor-content',
         role: 'textbox',
         'aria-multiline': 'true',
-        'aria-label': 'Note text',
-        spellcheck: 'false',
+        'aria-label': strings.editor.noteText,
+        spellcheck: spellcheck ? 'true' : 'false',
         autocorrect: 'off',
         autocapitalize: 'off',
       },
@@ -210,6 +214,12 @@ export const RichEditor: React.FC<RichEditorProps> = ({
       },
     },
   });
+
+  useEffect(() => {
+    if (editor && !editor.isDestroyed) {
+      editor.view.dom.setAttribute('spellcheck', String(spellcheck));
+    }
+  }, [editor, spellcheck]);
 
   const syncFormats = useCallback(() => {
     if (!editor || !onFormatChange) return;

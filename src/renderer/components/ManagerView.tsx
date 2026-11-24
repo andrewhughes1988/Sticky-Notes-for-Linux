@@ -9,6 +9,7 @@ import {
 import { NoteCard } from './NoteCard';
 import { DeleteModal } from './DeleteModal';
 import { ManagerMenu } from './ManagerMenu';
+import { strings } from '../strings';
 import { StickyNoteIcon } from './StickyNoteIcon';
 import { formatFriendlyDate } from '../utils/date';
 import { Plus, Search, X, Settings, Trash2, RotateCcw } from 'lucide-react';
@@ -35,6 +36,7 @@ export const ManagerView: React.FC = () => {
   const [isDeleting, setIsDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [autostart, setAutostart] = useState<boolean | null>(null);
+  const [spellcheck, setSpellcheck] = useState(false);
   const [themePref, setThemePref] = useState<AppTheme>('system');
   const [systemDark, setSystemDark] = useState<boolean>(() =>
     Boolean(window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches)
@@ -133,12 +135,16 @@ export const ManagerView: React.FC = () => {
     let active = true;
     let receivedAutostart = false;
     let receivedTheme = false;
+    let receivedSpellcheck = false;
 
     const unsubscribe = window.stickyNotesAPI.onSettingsChanged((key, value) => {
       if (key === 'autostart' && typeof value === 'boolean') {
         receivedAutostart = true;
         setAutostart(value);
         setAutostartError(null);
+      } else if (key === 'spellcheck' && typeof value === 'boolean') {
+        receivedSpellcheck = true;
+        setSpellcheck(value);
       } else if (key === 'theme' && (value === 'system' || value === 'light' || value === 'dark')) {
         receivedTheme = true;
         setThemePref(value);
@@ -152,6 +158,7 @@ export const ManagerView: React.FC = () => {
           setAutostart(config.autostart);
           setAutostartError(null);
         }
+        if (!receivedSpellcheck) setSpellcheck(config.spellcheck);
         if (!receivedTheme) {
           let resolvedTheme: AppTheme = config.theme;
           try {
@@ -467,6 +474,12 @@ export const ManagerView: React.FC = () => {
         <ManagerMenu
           isDarkMode={isDarkMode}
           isTrashView={activeTab === 'trash'}
+          spellcheck={spellcheck}
+          onToggleSpellcheck={() => {
+            void window.stickyNotesAPI.setConfig('spellcheck', !spellcheck).catch(() => {
+              setActionError(strings.settings.spellcheckSaveError);
+            });
+          }}
           autostart={autostart}
           isUpdatingAutostart={isUpdatingAutostart}
           autostartError={autostartError}

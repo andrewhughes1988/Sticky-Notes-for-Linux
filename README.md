@@ -30,6 +30,7 @@ A lightweight, offline-first, and distraction-free Sticky Notes app for Linux, i
 | `Ctrl + U` | Underline selected text |
 | `Ctrl + T` / `Ctrl + Shift + X` | Strikethrough selected text |
 | `Ctrl + Shift + L` | Toggle bulleted list |
+| `Ctrl + Shift + 7` | Toggle checklist |
 | `Ctrl + Shift + V` | Paste as plain text |
 | `Ctrl + Click` | Open a hyperlink in your default browser |
 | `Ctrl + Z` | Undo typing |
