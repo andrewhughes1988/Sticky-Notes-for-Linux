@@ -48,6 +48,22 @@ test('rejects malformed backups before writing any notes', () => {
   }
 });
 
+test('accepts exports with more than 10,000 notes and legacy long text', () => {
+  const longNote = {
+    ...backup.notes[0],
+    title: 't'.repeat(1001),
+    content_plain: 'p'.repeat(1_000_001),
+    content_html: `<p>${'h'.repeat(2_000_001)}</p>`,
+  };
+  const notes = Array.from({ length: 10_001 }, () => backup.notes[0]);
+  notes[10_000] = longNote;
+  const imported = parseBackup({ notes });
+  assert.equal(imported.length, 10_001);
+  assert.equal(imported[10_000].title, longNote.title);
+  assert.equal(imported[10_000].content_plain, longNote.content_plain);
+  assert.equal(imported[10_000].content_html, longNote.content_html);
+});
+
 test('snapshots only after save and resumes editors after success or failure', async () => {
   let saved = 'old';
   let resumed = 0;

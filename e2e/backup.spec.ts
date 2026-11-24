@@ -46,6 +46,7 @@ test('exports recent edits and imports a JSON backup as a separate note', async 
     expect(saved.notes.some((item) => item.content_plain.includes('Backup newest text'))).toBe(
       true
     );
+    fs.appendFileSync(file, ' '.repeat(50_000_001));
     await expect(editor).not.toHaveAttribute('inert', '');
     const imported = await manager.evaluate(() => window.stickyNotesAPI.importNotes());
     expect(imported).toEqual({ imported: true, count: saved.notes.length });

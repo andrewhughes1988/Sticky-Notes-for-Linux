@@ -10,14 +10,14 @@ export function parseBackup(input: unknown): ImportedNote[] {
   if (!input || typeof input !== 'object' || Array.isArray(input))
     throw new Error('Invalid backup.');
   const notes = (input as Record<string, unknown>).notes;
-  if (!Array.isArray(notes) || notes.length > 10000) throw new Error('Invalid backup notes.');
+  if (!Array.isArray(notes)) throw new Error('Invalid backup notes.');
   return notes.map((value) => {
     if (!value || typeof value !== 'object' || Array.isArray(value))
       throw new Error('Invalid note.');
     const note = value as Record<string, unknown>;
-    const text = (key: string, limit: number): string => {
+    const text = (key: string): string => {
       const field = note[key];
-      if (typeof field !== 'string' || field.length > limit) throw new Error('Invalid note text.');
+      if (typeof field !== 'string') throw new Error('Invalid note text.');
       return field;
     };
     if (
@@ -32,13 +32,13 @@ export function parseBackup(input: unknown): ImportedNote[] {
       throw new Error('Invalid note metadata.');
     }
     return {
-      title: text('title', 1000),
+      title: text('title'),
       color: note.color as NoteColor,
       is_pinned: note.is_pinned ? 1 : 0,
       created_at: note.created_at as number,
       updated_at: note.updated_at as number,
-      content_plain: text('content_plain', 1_000_000),
-      content_html: sanitizeNoteHtmlMain(text('content_html', 2_000_000)),
+      content_plain: text('content_plain'),
+      content_html: sanitizeNoteHtmlMain(text('content_html')),
     };
   });
 }

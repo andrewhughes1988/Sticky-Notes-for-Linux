@@ -719,7 +719,6 @@ export class WindowManager {
     const result = parent ? await dialog.showOpenDialog(parent, options) : await dialog.showOpenDialog(options);
     if (result.canceled || !result.filePaths[0]) return { imported: false, count: 0 };
     const file = result.filePaths[0];
-    if (fs.statSync(file).size > 50_000_000) throw new Error('Backup is too large.');
     const notes = parseBackup(JSON.parse(fs.readFileSync(file, 'utf8')));
     this.db.importNotes(notes);
     this.broadcast('notes:changed');
