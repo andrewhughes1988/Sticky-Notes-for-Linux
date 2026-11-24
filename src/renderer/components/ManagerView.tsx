@@ -1,11 +1,11 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
-import { AppTheme, EncryptionStatus } from '../../shared/types';
 import { NoteCard } from './NoteCard';
 import { DeleteModal } from './DeleteModal';
 import { ManagerMenu } from './ManagerMenu';
 import { StickyNoteIcon } from './StickyNoteIcon';
 import { TrashCard } from './TrashCard';
 import { useNotesList } from './useNotesList';
+import { useManagerSettings } from './useManagerSettings';
 import { Plus, Search, X, Settings, Trash2 } from 'lucide-react';
 
 export const ManagerView: React.FC = () => {
@@ -32,115 +32,28 @@ export const ManagerView: React.FC = () => {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [actionStatus, setActionStatus] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const {
+    isDarkMode,
+    autostart,
+    isUpdatingAutostart,
+    autostartError,
+    encryption,
+    isUpdatingEncryption,
+    backupCount,
+    toggleTheme,
+    handleAutostartChange,
+    handleEncryptionChange,
+    handlePurgeBackups,
+    handleRetrySettings,
+  } = useManagerSettings(setActionError, setActionStatus);
   const [noteToDelete, setNoteToDelete] = useState<string | null>(null);
   const [permanentDeleteId, setPermanentDeleteId] = useState<string | null>(null);
   const [confirmEmptyTrash, setConfirmEmptyTrash] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
-  const [autostart, setAutostart] = useState<boolean | null>(null);
-  const [themePref, setThemePref] = useState<AppTheme>('system');
-  const [systemDark, setSystemDark] = useState<boolean>(() =>
-    Boolean(window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches)
-  );
-  const [isUpdatingAutostart, setIsUpdatingAutostart] = useState(false);
-  const [autostartError, setAutostartError] = useState<string | null>(null);
-  const [encryption, setEncryption] = useState<EncryptionStatus | null>(null);
-  const [isUpdatingEncryption, setIsUpdatingEncryption] = useState(false);
-  const [backupCount, setBackupCount] = useState(0);
-  const [settingsRetry, setSettingsRetry] = useState(0);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const menuButtonRef = useRef<HTMLButtonElement>(null);
   const restoreSearchFocus = useRef(false);
-
-  const isDarkMode = themePref === 'dark' || (themePref === 'system' && systemDark);
-
-  useEffect(() => {
-    document.documentElement.classList.toggle('dark', isDarkMode);
-  }, [isDarkMode]);
-
-  useEffect(() => {
-    if (!window.matchMedia) return;
-    const mql = window.matchMedia('(prefers-color-scheme: dark)');
-    const listener = (event: MediaQueryListEvent) => setSystemDark(event.matches);
-    mql.addEventListener('change', listener);
-    return () => mql.removeEventListener('change', listener);
-  }, []);
-
-  const toggleTheme = useCallback(async () => {
-    const next: AppTheme = isDarkMode ? 'light' : 'dark';
-    setThemePref(next);
-    try {
-      await window.stickyNotesAPI.setConfig('theme', next);
-    } catch {
-      setActionError('Could not save theme preference.');
-    }
-  }, [isDarkMode]);
-
-  // Load settings from SQLite + migrate legacy localStorage('manager_theme') once
-  useEffect(() => {
-    let active = true;
-    let receivedAutostart = false;
-    let receivedTheme = false;
-
-    const unsubscribe = window.stickyNotesAPI.onSettingsChanged((key, value) => {
-      if (key === 'autostart' && typeof value === 'boolean') {
-        receivedAutostart = true;
-        setAutostart(value);
-        setAutostartError(null);
-      } else if (key === 'theme' && (value === 'system' || value === 'light' || value === 'dark')) {
-        receivedTheme = true;
-        setThemePref(value);
-      }
-    });
-
-    window.stickyNotesAPI.getConfig().then(
-      (config) => {
-        if (!active) return;
-        if (!receivedAutostart) {
-          setAutostart(config.autostart);
-          setAutostartError(null);
-        }
-        if (!receivedTheme) {
-          let resolvedTheme: AppTheme = config.theme;
-          try {
-            const legacy = localStorage.getItem('manager_theme');
-            if ((legacy === 'dark' || legacy === 'light') && config.theme === 'system') {
-              resolvedTheme = legacy;
-              void window.stickyNotesAPI.setConfig('theme', legacy).catch(() => {});
-            }
-            if (legacy !== null) localStorage.removeItem('manager_theme');
-          } catch {
-            // Ignore storage access errors
-          }
-          setThemePref(resolvedTheme);
-        }
-      },
-      () => {
-        if (active && !receivedAutostart) {
-          setAutostartError('Could not load settings.');
-        }
-      }
-    );
-
-    window.stickyNotesAPI
-      .getMigrationBackupCount()
-      .then((count) => {
-        if (active) setBackupCount(count);
-      })
-      .catch(() => {});
-
-    window.stickyNotesAPI
-      .getEncryptionStatus()
-      .then((status) => {
-        if (active) setEncryption(status);
-      })
-      .catch(() => {});
-
-    return () => {
-      active = false;
-      unsubscribe();
-    };
-  }, [settingsRetry]);
 
   // Keyboard shortcuts: Ctrl+N (new note), Ctrl+F (focus search), Ctrl+Q (quit), Escape (clear search)
   useEffect(() => {
@@ -174,36 +87,6 @@ export const ManagerView: React.FC = () => {
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [searchQuery, setActiveTab, setPage, setSearchQuery]);
-
-  const handleAutostartChange = useCallback(async (enabled: boolean) => {
-    setIsUpdatingAutostart(true);
-    setAutostartError(null);
-    try {
-      await window.stickyNotesAPI.setConfig('autostart', enabled);
-      setAutostart(enabled);
-    } catch {
-      setAutostartError('Could not change the startup setting. Try again.');
-    } finally {
-      setIsUpdatingAutostart(false);
-    }
-  }, []);
-
-  const handleEncryptionChange = useCallback(async (enabled: boolean) => {
-    setIsUpdatingEncryption(true);
-    setActionError(null);
-    setActionStatus(null);
-    try {
-      const updated = await window.stickyNotesAPI.setEncryptionEnabled(enabled);
-      setEncryption(updated);
-      setActionStatus(
-        updated.enabled ? 'Notes are now encrypted at rest.' : 'Note encryption disabled.'
-      );
-    } catch {
-      setActionError('Could not update encryption setting. Verify your OS keyring is unlocked.');
-    } finally {
-      setIsUpdatingEncryption(false);
-    }
-  }, []);
 
   const runAction = useCallback(
     async (action: () => Promise<unknown>, errorMessage: string, successMessage?: string) => {
@@ -296,26 +179,10 @@ export const ManagerView: React.FC = () => {
     }
   }, []);
 
-  const handlePurgeBackups = useCallback(async () => {
-    setActionError(null);
-    setActionStatus(null);
-    try {
-      const removed = await window.stickyNotesAPI.purgeMigrationBackups();
-      setBackupCount(0);
-      setActionStatus(`Removed ${removed} pre-upgrade backup file${removed === 1 ? '' : 's'}.`);
-    } catch {
-      setActionError('Could not remove pre-upgrade backups.');
-    }
-  }, []);
-
   const handleToggleTrashView = useCallback(() => {
     setIsLoading(true);
     setActiveTab((tab) => (tab === 'notes' ? 'trash' : 'notes'));
   }, [setActiveTab, setIsLoading]);
-
-  const handleRetrySettings = useCallback(() => {
-    setSettingsRetry((value) => value + 1);
-  }, []);
 
   const handleCloseMenu = useCallback(() => {
     setIsMenuOpen(false);
