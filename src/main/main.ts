@@ -5,7 +5,12 @@ import { TrayService } from './tray';
 import { AutostartManager } from './autostart';
 import { registerIpcHandlers } from './ipcHandlers';
 import { parseSafeExternalUrl } from './htmlSanitizer';
-import { AesGcmNoteCipher, createElectronKeyringAdapter } from './crypto';
+import {
+  AesGcmNoteCipher,
+  createElectronKeyringAdapter,
+  KeyringUnlockError,
+  unlockNoteEncryptionKey,
+} from './crypto';
 import { DESKTOP_FILE_NAME, WINDOW_WM_CLASS } from './linuxPlatform';
 import { logger } from './logger';
 
@@ -77,12 +82,7 @@ if (!gotTheLock) {
       const keyring = createElectronKeyringAdapter(safeStorage);
       if (db.isEncryptionEnabled()) {
         const wrapped = db.getWrappedEncryptionKey();
-        if (!wrapped || !keyring.isAvailable()) {
-          throw new Error(
-            'Notes encryption is enabled, but the OS keyring is unavailable. Unlock your desktop keyring (e.g., KWallet or GNOME Keyring) and relaunch.'
-          );
-        }
-        const keyHex = keyring.unseal(wrapped);
+        const keyHex = unlockNoteEncryptionKey(keyring, wrapped);
         db.unlockWithCipher(new AesGcmNoteCipher(Buffer.from(keyHex, 'hex')));
       }
       autostartManager = new AutostartManager();
@@ -121,7 +121,9 @@ if (!gotTheLock) {
       logger.error('Could not start Sticky Notes', error);
       dialog.showErrorBox(
         'Sticky Notes could not start',
-        'Check that your notes database and its directory are accessible. Keep the database and any companion files together if you need to recover them.'
+        error instanceof KeyringUnlockError
+          ? error.userMessage
+          : 'Check that your notes database and its directory are accessible. Keep the database and any companion files together if you need to recover them.'
       );
       app.quit();
     });
