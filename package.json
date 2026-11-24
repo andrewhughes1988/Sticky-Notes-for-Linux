@@ -152,5 +152,10 @@
       "afterInstall": "build/after-install.sh",
       "afterRemove": "build/after-remove.sh"
     }
+  },
+  "overrides": {
+    "app-builder-lib": {
+      "minimatch@>=7 <11": "^11.0.9"
+    }
   }
 }
