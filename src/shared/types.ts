@@ -14,14 +14,9 @@ export interface Note {
   pos_y: number | null;
   width: number;
   height: number;
-  z_order: number;
   created_at: number;
   updated_at: number;
   deleted_at: number | null;
-  remote_id: string | null;
-  sync_status: 'synced' | 'pending_create' | 'pending_update' | 'pending_delete';
-  change_key: string | null;
-  last_synced_at: number | null;
 }
 
 export type NotePreview = Pick<Note, 'id' | 'color' | 'updated_at' | 'is_open' | 'is_pinned'> & {
