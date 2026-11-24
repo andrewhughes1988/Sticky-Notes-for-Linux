@@ -18,6 +18,31 @@ export interface KeyringAdapter {
   unseal(sealedBase64: string): string;
 }
 
+export class KeyringUnlockError extends Error {
+  public readonly userMessage =
+    'Notes encryption is enabled, but Sticky Notes could not unlock the encryption key from your desktop keyring. Unlock your desktop keyring (for example, KWallet or GNOME Keyring) and relaunch. If it is already unlocked, verify that it is available to this session.';
+
+  constructor(cause?: unknown) {
+    super('Could not unlock the note encryption key from the desktop keyring.', { cause });
+    this.name = 'KeyringUnlockError';
+  }
+}
+
+export function unlockNoteEncryptionKey(
+  keyring: KeyringAdapter,
+  wrappedKey: string | null
+): string {
+  if (!wrappedKey || !keyring.isAvailable()) {
+    throw new KeyringUnlockError();
+  }
+
+  try {
+    return keyring.unseal(wrappedKey);
+  } catch (error) {
+    throw new KeyringUnlockError(error);
+  }
+}
+
 export function generateDataEncryptionKey(): Buffer {
   return crypto.randomBytes(KEY_BYTES);
 }

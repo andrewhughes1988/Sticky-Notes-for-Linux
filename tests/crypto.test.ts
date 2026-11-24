@@ -4,7 +4,12 @@ import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import Database from 'better-sqlite3';
-import { AesGcmNoteCipher, generateDataEncryptionKey } from '../src/main/crypto';
+import {
+  AesGcmNoteCipher,
+  generateDataEncryptionKey,
+  KeyringUnlockError,
+  unlockNoteEncryptionKey,
+} from '../src/main/crypto';
 import { DatabaseService } from '../src/main/database';
 
 test('AesGcmNoteCipher encrypts with unique IVs, authenticates AAD, and detects tampering', () => {
@@ -28,6 +33,39 @@ test('AesGcmNoteCipher encrypts with unique IVs, authenticates AAD, and detects 
   // Tampering with ciphertext byte must fail authentication
   const tampered = enc1.slice(0, -2) + (enc1.endsWith('AA') ? 'BB' : 'AA');
   assert.throws(() => cipher.decrypt(tampered, 'note-1:content_plain'));
+});
+
+test('startup reports actionable guidance when the desktop keyring cannot unlock notes', () => {
+  const keyring = {
+    isAvailable: () => true,
+    backendName: () => 'gnome-libsecret',
+    seal: (secretHex: string) => secretHex,
+    unseal: () => {
+      throw new Error('keyring is locked');
+    },
+  };
+
+  assert.throws(
+    () => unlockNoteEncryptionKey(keyring, 'wrapped-key'),
+    (error: unknown) => {
+      assert.ok(error instanceof KeyringUnlockError);
+      assert.match(error.userMessage, /unlock your desktop keyring/i);
+      assert.match(error.userMessage, /available to this session/i);
+      return true;
+    }
+  );
+});
+
+test('startup classifies a missing or unavailable keyring as an unlock error', () => {
+  const keyring = {
+    isAvailable: () => false,
+    backendName: () => 'basic_text',
+    seal: (secretHex: string) => secretHex,
+    unseal: (sealedBase64: string) => sealedBase64,
+  };
+
+  assert.throws(() => unlockNoteEncryptionKey(keyring, 'wrapped-key'), KeyringUnlockError);
+  assert.throws(() => unlockNoteEncryptionKey(keyring, null), KeyringUnlockError);
 });
 
 test('DatabaseService encryption-at-rest eliminates plaintext on disk, preserves search, and toggles cleanly', () => {
