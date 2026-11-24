@@ -258,3 +258,47 @@ test('window manager rejects subframes and waits for the matching editor acknowl
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('reopening the manager restores its size and keeps note data', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sticky-manager-lifecycle-'));
+  let app: ElectronApplication | undefined;
+  try {
+    app = await electron.launch({
+      args: [...(process.env.CI ? ['--no-sandbox'] : []), '--ozone-platform=x11', '.'],
+      cwd: process.cwd(),
+      env: {
+        ...process.env,
+        XDG_DATA_HOME: path.join(root, 'data'),
+        XDG_CONFIG_HOME: path.join(root, 'config'),
+        XDG_STATE_HOME: path.join(root, 'state'),
+      },
+    });
+    const note = await app.firstWindow();
+    const editor = note.getByRole('textbox', { name: 'Note text' });
+    await expect(editor).toBeVisible();
+    await editor.fill('Manager lifecycle note');
+    await note.getByRole('button', { name: 'Note options' }).click();
+    const managerPromise = app.waitForEvent('window');
+    await note.getByRole('button', { name: 'Notes list' }).click();
+    const manager = await managerPromise;
+    await expect(manager.getByRole('textbox', { name: 'Search notes' })).toBeVisible();
+    const managerWindow = await app.browserWindow(manager);
+    const managerClosed = manager.waitForEvent('close');
+    await managerWindow.evaluate((win) => {
+      win.setSize(520, 680);
+      win.close();
+    });
+    await managerClosed;
+    await note.getByRole('button', { name: 'Note options' }).click();
+    const reopenedPromise = app.waitForEvent('window');
+    await note.getByRole('button', { name: 'Notes list' }).click();
+    const reopened = await reopenedPromise;
+    await expect(reopened.getByText('Manager lifecycle note')).toBeVisible();
+    const reopenedWindow = await app.browserWindow(reopened);
+    const bounds = await reopenedWindow.evaluate((win) => win.getSize());
+    expect(bounds).toEqual([520, 680]);
+  } finally {
+    if (app) await app.close().catch(() => {});
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
