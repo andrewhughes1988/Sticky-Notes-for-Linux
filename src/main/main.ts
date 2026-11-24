@@ -17,6 +17,7 @@ if (process.platform === 'linux' && typeof app.setDesktopName === 'function') {
   app.setDesktopName(DESKTOP_FILE_NAME);
 }
 app.commandLine.appendSwitch('log-level', '3'); // Suppress benign Chromium internal VSync notices
+app.commandLine.appendSwitch('process-per-site');
 
 app.setName('Sticky Notes');
 if (process.platform === 'win32' || process.platform === 'linux') {
@@ -71,6 +72,9 @@ if (!gotTheLock) {
         callback(false);
       });
       session.defaultSession.setPermissionCheckHandler(() => false);
+      const managerSession = session.fromPartition('inmemory:manager');
+      managerSession.setPermissionRequestHandler((_wc, _permission, callback) => callback(false));
+      managerSession.setPermissionCheckHandler(() => false);
 
       // 1. Initialize core services
       db = new DatabaseService();

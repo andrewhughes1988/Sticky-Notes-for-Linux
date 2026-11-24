@@ -81,6 +81,13 @@ export function registerIpcHandlers(
   autostartManager: AutostartManager,
   keyring: KeyringAdapter
 ): void {
+  ipcMain.on('window:getIdentity', (event) => {
+    try {
+      event.returnValue = windowManager.rendererRole(event);
+    } catch {
+      event.returnValue = null;
+    }
+  });
   function requireManager(event: IpcMainInvokeEvent): void {
     if (windowManager.rendererRole(event).noteId !== null) throw new Error('Notes list required.');
   }
