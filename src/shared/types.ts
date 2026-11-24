@@ -240,6 +240,7 @@ export interface StickyNotesAPI {
   showManagerWindow: () => Promise<void>;
   closeManagerWindow: () => Promise<void>;
   quitApp: () => Promise<void>;
+  logRendererError: (errorName: string) => Promise<void>;
   openExternalLink: (url: string) => Promise<void>;
 
   // System Events

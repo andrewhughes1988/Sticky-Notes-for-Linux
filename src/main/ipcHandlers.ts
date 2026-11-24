@@ -208,6 +208,20 @@ export function registerIpcHandlers(
     requireManager(event);
     windowManager.closeManagerWindow();
   });
+  const rendererErrorCounts = new WeakMap<Electron.WebContents, { start: number; count: number }>();
+  const rendererErrorNames = new Set(['Error', 'TypeError', 'RangeError', 'ReferenceError', 'SyntaxError', 'URIError', 'EvalError']);
+  ipcMain.handle('app:logRendererError', (event, value: unknown) => {
+    windowManager.rendererRole(event);
+    if (typeof value !== 'string' || value.length > 64) throw new Error('Invalid error type.');
+    const name = rendererErrorNames.has(value) ? value : 'Error';
+    const now = Date.now();
+    let count = rendererErrorCounts.get(event.sender);
+    if (!count || now - count.start >= 60_000) {
+      count = { start: now, count: 0 };
+      rendererErrorCounts.set(event.sender, count);
+    }
+    if (count.count++ < 5) logger.error('Renderer error caught', name);
+  });
   ipcMain.handle('app:quit', (event) => {
     windowManager.rendererRole(event);
     app.quit();

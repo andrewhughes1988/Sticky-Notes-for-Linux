@@ -36,6 +36,7 @@ const api: StickyNotesAPI = {
   showManagerWindow: () => ipcRenderer.invoke('manager:show'),
   closeManagerWindow: () => ipcRenderer.invoke('manager:close'),
   quitApp: () => ipcRenderer.invoke('app:quit'),
+  logRendererError: (errorName) => ipcRenderer.invoke('app:logRendererError', errorName),
   openExternalLink: (url: string) => ipcRenderer.invoke('shell:openExternal', url),
 
   onNotesChanged: (callback: () => void) => {
