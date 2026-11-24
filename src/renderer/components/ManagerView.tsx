@@ -387,6 +387,20 @@ export const ManagerView: React.FC = () => {
     setIsMenuOpen(false);
   }, []);
 
+  const handleImportJson = useCallback(async () => {
+    setActionError(null);
+    setActionStatus(null);
+    try {
+      const result = await window.stickyNotesAPI.importNotes();
+      if (result.imported) {
+        setActionStatus(`Imported ${result.count} note${result.count === 1 ? '' : 's'}.`);
+        refreshNotes();
+      }
+    } catch {
+      setActionError('Could not import the backup. Check that it is a valid Sticky Notes JSON file.');
+    }
+  }, [refreshNotes]);
+
   const handleExportJson = useCallback(() => {
     void handleExport('json');
   }, [handleExport]);
@@ -479,6 +493,7 @@ export const ManagerView: React.FC = () => {
           onRetrySettings={handleRetrySettings}
           onToggleEncryption={handleToggleEncryptionSync}
           onToggleTrashView={handleToggleTrashView}
+          onImportJson={() => void handleImportJson()}
           onExportJson={handleExportJson}
           onExportMarkdown={handleExportMarkdown}
           onPurgeBackups={handlePurgeBackupsSync}

@@ -13,6 +13,7 @@ import {
   NOTE_COLORS,
 } from '../shared/types';
 import { NoteCipher } from './crypto';
+import { ImportedNote } from './backupImport';
 
 interface ListOptions {
   search?: string;
@@ -618,6 +619,13 @@ export class DatabaseService {
 
     this.stmtInsertNote.run(storedNote);
     return note;
+  }
+
+  public importNotes(notes: ImportedNote[]): void {
+    this.requireUnlocked();
+    this.db.transaction(() => {
+      for (const note of notes) this.createNote({ ...note, is_open: 0 });
+    })();
   }
 
   public getNoteById(id: string): Note | null {
