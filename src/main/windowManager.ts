@@ -1,3 +1,4 @@
+import { IPC_CHANNELS } from '../shared/ipc';
 import {
   BrowserWindow,
   Menu,
@@ -207,7 +208,7 @@ export class WindowManager {
     });
 
     this.createNoteWindow(newNote);
-    this.broadcast('notes:changed');
+    this.broadcast(IPC_CHANNELS.NOTES_CHANGED);
     return newNote;
   }
 
@@ -234,7 +235,7 @@ export class WindowManager {
       win.show();
       win.focus();
       win.moveTop();
-      this.broadcast('notes:changed');
+      this.broadcast(IPC_CHANNELS.NOTES_CHANGED);
     } else {
       throw new Error('Note no longer exists.');
     }
@@ -367,7 +368,7 @@ export class WindowManager {
         } catch (error) {
           logger.error('Failed to save note window state', error);
         }
-        this.broadcast('notes:changed');
+        this.broadcast(IPC_CHANNELS.NOTES_CHANGED);
       }
     });
 
@@ -500,7 +501,7 @@ export class WindowManager {
       })
       .catch((error) => {
         if (this.readyEditors.has(contents) && !contents.isDestroyed() && !this.flushingAll) {
-          contents.send('editor:resume');
+          contents.send(IPC_CHANNELS.EDITOR_RESUME);
         }
         throw error;
       })
@@ -568,7 +569,7 @@ export class WindowManager {
     });
     this.flushRequests.set(contents, { id, finish, promise });
     try {
-      contents.send('editor:flush', id);
+      contents.send(IPC_CHANNELS.EDITOR_FLUSH, id);
     } catch {
       finish(false);
     }
@@ -588,7 +589,7 @@ export class WindowManager {
   public resumeEditors(): void {
     this.flushingAll = false;
     for (const contents of this.readyEditors) {
-      if (!contents.isDestroyed()) contents.send('editor:resume');
+      if (!contents.isDestroyed()) contents.send(IPC_CHANNELS.EDITOR_RESUME);
     }
   }
 
@@ -603,7 +604,7 @@ export class WindowManager {
       win.destroy();
     }
     this.noteWindows.delete(id);
-    this.broadcast('notes:changed');
+    this.broadcast(IPC_CHANNELS.NOTES_CHANGED);
   }
 
   public restoreNote(id: string): void {
@@ -611,7 +612,7 @@ export class WindowManager {
     if (!this.db.restoreNote(id)) {
       throw new Error('Deleted note no longer exists.');
     }
-    this.broadcast('notes:changed');
+    this.broadcast(IPC_CHANNELS.NOTES_CHANGED);
   }
 
   public permanentlyDeleteNote(id: string): void {
@@ -622,13 +623,13 @@ export class WindowManager {
       win.destroy();
     }
     this.noteWindows.delete(id);
-    this.broadcast('notes:changed');
+    this.broadcast(IPC_CHANNELS.NOTES_CHANGED);
   }
 
   public emptyTrash(): void {
     if (this.flushingAll) throw new Error('Sticky Notes is closing.');
     this.db.emptyTrash();
-    this.broadcast('notes:changed');
+    this.broadcast(IPC_CHANNELS.NOTES_CHANGED);
   }
 
   /**
@@ -700,7 +701,7 @@ export class WindowManager {
     if (win && !win.isDestroyed()) {
       win.setAlwaysOnTop(isPinned);
     }
-    this.broadcast('notes:changed');
+    this.broadcast(IPC_CHANNELS.NOTES_CHANGED);
     return isPinned;
   }
 
@@ -893,7 +894,7 @@ export class WindowManager {
    * Broadcast an event to renderer windows (throttled for rapid notes:changed events).
    */
   public broadcast(channel: string, ...args: unknown[]): void {
-    if (channel === 'notes:changed') {
+    if (channel === IPC_CHANNELS.NOTES_CHANGED) {
       const existing = this.broadcastTimers.get(channel);
       if (existing) clearTimeout(existing);
 
