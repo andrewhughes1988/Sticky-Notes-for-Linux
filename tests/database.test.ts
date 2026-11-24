@@ -351,3 +351,47 @@ test('Corrupt DB protection, transactional migrations, verified backups, and bac
     fs.rmSync(tempDir, { recursive: true, force: true });
   }
 });
+
+test('existing databases retain legacy columns while notes use the current model', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'sticky-legacy-columns-'));
+  const file = path.join(directory, 'notes.db');
+  const legacyColumns = ['z_order', 'remote_id', 'sync_status', 'change_key', 'last_synced_at'];
+  try {
+    const initial = new DatabaseService(file);
+    initial.createNote({ id: 'old-note', content_plain: 'Original content' });
+    initial.close();
+
+    const raw = new Database(file);
+    const createdColumns = raw.pragma('table_info(notes)') as { name: string }[];
+    for (const column of legacyColumns) {
+      assert.equal(createdColumns.some((entry) => entry.name === column), false);
+      const definition = column === 'z_order' ? 'INTEGER NOT NULL DEFAULT 0'
+        : column === 'sync_status' ? "TEXT NOT NULL DEFAULT 'synced'"
+        : column === 'last_synced_at' ? 'INTEGER DEFAULT NULL' : 'TEXT DEFAULT NULL';
+      raw.exec(`ALTER TABLE notes ADD COLUMN ${column} ${definition}`);
+    }
+    raw.prepare("UPDATE notes SET remote_id = 'preserved' WHERE id = 'old-note'").run();
+    raw.close();
+
+    const reopened = new DatabaseService(file);
+    try {
+      assert.equal(reopened.getNoteById('old-note')?.content_plain, 'Original content');
+      for (const note of [reopened.getNoteById('old-note'), ...reopened.getOpenNotes(), ...reopened.getAllNotes()]) {
+        assert.ok(note);
+        for (const column of legacyColumns) assert.equal(Object.hasOwn(note, column), false);
+      }
+      const created = reopened.createNote({ content_plain: 'New content' });
+      reopened.updateNote(created.id, { content_plain: 'Updated content' });
+      assert.equal(reopened.getNoteById(created.id)?.content_plain, 'Updated content');
+      assert.equal(reopened.getAllNotes({ search: 'Updated' })[0]?.id, created.id);
+    } finally {
+      reopened.close();
+    }
+
+    const after = new Database(file, { readonly: true });
+    assert.equal((after.prepare("SELECT remote_id FROM notes WHERE id = 'old-note'").get() as { remote_id: string }).remote_id, 'preserved');
+    after.close();
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});

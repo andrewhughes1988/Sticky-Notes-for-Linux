@@ -29,6 +29,7 @@ export interface WindowBounds {
 }
 
 const SCHEMA_VERSION = 3;
+const NOTE_COLUMNS = 'notes.id, notes.title, notes.content_html, notes.content_plain, notes.color, notes.is_open, notes.is_pinned, notes.pos_x, notes.pos_y, notes.width, notes.height, notes.created_at, notes.updated_at, notes.deleted_at';
 const PREVIEW_COLUMNS = 'notes.id, notes.color, notes.updated_at, notes.is_open, notes.is_pinned';
 const DEFAULT_SETTINGS: AppConfig = {
   theme: 'system',
@@ -204,20 +205,18 @@ export class DatabaseService {
     this.stmtInsertNote = this.db.prepare(`
       INSERT INTO notes (
         id, title, content_html, content_plain, color, is_open, is_pinned,
-        pos_x, pos_y, width, height, z_order, created_at, updated_at,
-        deleted_at, remote_id, sync_status, change_key, last_synced_at, last_active_at
+        pos_x, pos_y, width, height, created_at, updated_at, deleted_at, last_active_at
       ) VALUES (
         @id, @title, @content_html, @content_plain, @color, @is_open, @is_pinned,
-        @pos_x, @pos_y, @width, @height, @z_order, @created_at, @updated_at,
-        @deleted_at, @remote_id, @sync_status, @change_key, @last_synced_at, @updated_at
+        @pos_x, @pos_y, @width, @height, @created_at, @updated_at, @deleted_at, @updated_at
       )
     `);
 
     this.stmtGetNoteById = this.db.prepare(
-      'SELECT * FROM notes WHERE id = ? AND deleted_at IS NULL'
+      `SELECT ${NOTE_COLUMNS} FROM notes WHERE id = ? AND deleted_at IS NULL`
     );
     this.stmtGetOpenNotes = this.db.prepare(`
-      SELECT * FROM notes WHERE is_open = 1 AND deleted_at IS NULL ORDER BY last_active_at ASC, id DESC
+      SELECT ${NOTE_COLUMNS} FROM notes WHERE is_open = 1 AND deleted_at IS NULL ORDER BY last_active_at ASC, id DESC
     `);
     this.stmtGetMostRecentlyActiveNote = this.db.prepare(`
       SELECT id FROM notes WHERE deleted_at IS NULL ORDER BY last_active_at DESC, id ASC LIMIT 1
@@ -325,14 +324,9 @@ export class DatabaseService {
         pos_y INTEGER,
         width INTEGER NOT NULL DEFAULT 320,
         height INTEGER NOT NULL DEFAULT 340,
-        z_order INTEGER NOT NULL DEFAULT 0,
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL,
-        deleted_at INTEGER DEFAULT NULL,
-        remote_id TEXT DEFAULT NULL,
-        sync_status TEXT NOT NULL DEFAULT 'synced',
-        change_key TEXT DEFAULT NULL,
-        last_synced_at INTEGER DEFAULT NULL
+        deleted_at INTEGER DEFAULT NULL
       );
 
       CREATE INDEX IF NOT EXISTS idx_notes_is_open ON notes(is_open) WHERE deleted_at IS NULL;
@@ -597,14 +591,9 @@ export class DatabaseService {
       pos_y: initial.pos_y !== undefined ? initial.pos_y : null,
       width: initial.width || 320,
       height: initial.height || 340,
-      z_order: initial.z_order || 0,
       created_at: initial.created_at || now,
       updated_at: initial.updated_at || now,
       deleted_at: null,
-      remote_id: initial.remote_id || null,
-      sync_status: initial.sync_status || 'synced',
-      change_key: initial.change_key || null,
-      last_synced_at: initial.last_synced_at || null,
     };
 
     const storedNote: Note = this.cipher
@@ -645,7 +634,7 @@ export class DatabaseService {
       const all = (
         this.db
           .prepare(
-            `SELECT * FROM notes WHERE deleted_at IS NULL${
+            `SELECT ${NOTE_COLUMNS} FROM notes WHERE deleted_at IS NULL${
               options.includeClosed === false ? ' AND is_open = 1' : ''
             } ORDER BY updated_at DESC, id ASC`
           )
@@ -664,7 +653,7 @@ export class DatabaseService {
       const limit = Number.isSafeInteger(options.limit) && options.limit! > 0 ? options.limit! : undefined;
       return limit !== undefined ? filtered.slice(offset, offset + limit) : filtered.slice(offset);
     }
-    return this.listNotes('notes.*', options) as Note[];
+    return this.listNotes(NOTE_COLUMNS, options) as Note[];
   }
 
   public getNotePreviews(options: ListOptions = {}): NotePreview[] {
@@ -815,7 +804,6 @@ export class DatabaseService {
       'pos_y',
       'width',
       'height',
-      'z_order',
     ];
 
     for (const key of allowedKeys) {
