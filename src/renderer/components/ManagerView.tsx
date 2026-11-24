@@ -4,14 +4,13 @@ import {
   DeletedNotePreview,
   EncryptionStatus,
   NotePreview,
-  NOTE_COLORS,
 } from '../../shared/types';
 import { NoteCard } from './NoteCard';
 import { DeleteModal } from './DeleteModal';
 import { ManagerMenu } from './ManagerMenu';
 import { StickyNoteIcon } from './StickyNoteIcon';
-import { formatFriendlyDate } from '../utils/date';
-import { Plus, Search, X, Settings, Trash2, RotateCcw } from 'lucide-react';
+import { TrashCard } from './TrashCard';
+import { Plus, Search, X, Settings, Trash2 } from 'lucide-react';
 
 const PAGE_SIZE = 40;
 
@@ -625,51 +624,23 @@ export const ManagerView: React.FC = () => {
         )}
 
         {activeTab === 'trash' &&
-          deletedNotes.map((note) => {
-            const theme = NOTE_COLORS[note.color] || NOTE_COLORS.yellow;
-            const previewText = note.preview.trim() || 'Empty note';
-            return (
-              <article
-                key={note.id}
-                className={`note-card note-card-trash ${theme.isDark ? 'dark' : ''}`}
-                data-color={theme.id}
-              >
-                <div className="note-card-trash-body">
-                  <div className="note-card-header">
-                    <span className="note-card-date">
-                      Deleted {formatFriendlyDate(note.deleted_at)}
-                    </span>
-                  </div>
-                  <div className="note-card-preview">{previewText}</div>
-                  <div className="note-card-trash-actions">
-                    <button
-                      type="button"
-                      className="modal-btn"
-                      onClick={() =>
-                        void runAction(
-                          () => window.stickyNotesAPI.restoreNote(note.id),
-                          'Could not restore the note.',
-                          'Note restored.'
-                        )
-                      }
-                    >
-                      <RotateCcw size={13} aria-hidden="true" /> Restore
-                    </button>
-                    <button
-                      type="button"
-                      className="modal-btn danger"
-                      onClick={() => {
-                        setDeleteError(null);
-                        setPermanentDeleteId(note.id);
-                      }}
-                    >
-                      Delete forever
-                    </button>
-                  </div>
-                </div>
-              </article>
-            );
-          })}
+          deletedNotes.map((note) => (
+            <TrashCard
+              key={note.id}
+              note={note}
+              onRestore={(id) =>
+                void runAction(
+                  () => window.stickyNotesAPI.restoreNote(id),
+                  'Could not restore the note.',
+                  'Note restored.'
+                )
+              }
+              onDelete={(id) => {
+                setDeleteError(null);
+                setPermanentDeleteId(id);
+              }}
+            />
+          ))}
       </main>
 
       {activeTab === 'notes' && (page > 0 || hasMore) && (

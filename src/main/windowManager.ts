@@ -20,6 +20,9 @@ import { DatabaseService, WindowBounds } from './database';
 import { parseSafeExternalUrl } from './htmlSanitizer';
 import { isRunningOnNativeWayland } from './linuxPlatform';
 import { logger } from './logger';
+import { formatNoteExport } from './noteExport';
+import { resolveRendererRole } from './rendererRole';
+import { EditorFlush } from './editorFlush';
 import { Note, NOTE_COLORS, ExportResult } from '../shared/types';
 
 function isPositionVisible(x: number, y: number): boolean {
@@ -88,15 +91,10 @@ export class WindowManager {
   private iconImage: NativeImage | undefined;
   private distPath: string;
   private rendererUrl: URL;
-  private readyEditors = new Set<WebContents>();
   private stalledEditors = new WeakMap<WebContents, () => void>();
   private approvedCloses = new Set<string>();
   private closingNotes = new Map<string, Promise<void>>();
-  private flushRequests = new Map<
-    WebContents,
-    { id: number; finish: (saved: boolean) => void; promise: Promise<void> }
-  >();
-  private flushId = 0;
+  private editorFlush = new EditorFlush((contents) => this.stalledEditors.get(contents)?.());
   private flushingAll = false;
   private isQuitting = false;
   private isNativeWayland = false;
@@ -372,9 +370,9 @@ export class WindowManager {
     });
 
     contents.on('did-start-navigation', ({ isMainFrame, isSameDocument }) => {
-      if (isMainFrame && !isSameDocument) this.detachEditor(contents);
+      if (isMainFrame && !isSameDocument) this.editorFlush.detach(contents);
     });
-    contents.on('destroyed', () => this.detachEditor(contents));
+    contents.on('destroyed', () => this.editorFlush.detach(contents));
     win.once('closed', () => {
       if (resizeTimeout) clearTimeout(resizeTimeout);
     });
@@ -384,11 +382,6 @@ export class WindowManager {
     });
 
     return win;
-  }
-
-  private detachEditor(contents: WebContents): void {
-    this.readyEditors.delete(contents);
-    this.flushRequests.get(contents)?.finish(false);
   }
 
   private watchNoteRenderer(win: BrowserWindow, noteId: string): void {
@@ -470,7 +463,7 @@ export class WindowManager {
     });
     contents.on('render-process-gone', () => {
       rendererExited = true;
-      this.detachEditor(contents);
+      this.editorFlush.detach(contents);
       dismissPrompt();
       this.stalledEditors.set(contents, recover);
       recover();
@@ -487,7 +480,7 @@ export class WindowManager {
     const win = this.noteWindows.get(id);
     if (!win || win.isDestroyed() || this.flushingAll) return Promise.resolve();
     const contents = win.webContents;
-    const closing = this.flushEditor(contents)
+    const closing = this.editorFlush.flush(contents)
       .then(() => {
         if (!win.isDestroyed() && !this.flushingAll) {
           this.approvedCloses.add(id);
@@ -499,7 +492,7 @@ export class WindowManager {
         }
       })
       .catch((error) => {
-        if (this.readyEditors.has(contents) && !contents.isDestroyed() && !this.flushingAll) {
+        if (this.editorFlush.isReady(contents) && !contents.isDestroyed() && !this.flushingAll) {
           contents.send('editor:resume');
         }
         throw error;
@@ -510,75 +503,25 @@ export class WindowManager {
   }
 
   public rendererRole(event: IpcMainEvent | IpcMainInvokeEvent): { noteId: string | null } {
-    const frame = event.senderFrame;
-    if (frame && frame === event.sender.mainFrame && frame.url) {
-      let url: URL;
-      try {
-        url = new URL(frame.url);
-      } catch {
-        throw new Error('Unrecognized renderer.');
-      }
-      if (
-        url.protocol === this.rendererUrl.protocol &&
-        url.host === this.rendererUrl.host &&
-        url.pathname === this.rendererUrl.pathname &&
-        url.username === '' &&
-        url.password === ''
-      ) {
-        if (this.managerWindow?.webContents === event.sender) return { noteId: null };
-        for (const [noteId, win] of this.noteWindows) {
-          if (win.webContents === event.sender) return { noteId };
-        }
-      }
-    }
-    throw new Error('Unrecognized renderer.');
+    return resolveRendererRole(event, this.rendererUrl, this.managerWindow, this.noteWindows);
   }
 
   public markEditorReady(contents: WebContents): void {
-    this.readyEditors.add(contents);
+    this.editorFlush.markReady(contents);
   }
 
   public markEditorUnready(contents: WebContents): void {
-    this.detachEditor(contents);
+    this.editorFlush.detach(contents);
   }
 
   public acknowledgeEditorFlush(contents: WebContents, id: number, saved: boolean): void {
-    const request = this.flushRequests.get(contents);
-    if (request?.id === id) request.finish(saved);
-  }
-
-  private flushEditor(contents: WebContents): Promise<void> {
-    if (!this.readyEditors.has(contents)) return Promise.resolve();
-    const existing = this.flushRequests.get(contents);
-    if (existing) return existing.promise;
-
-    const id = ++this.flushId;
-    let finish!: (saved: boolean) => void;
-    const promise = new Promise<void>((resolve, reject) => {
-      finish = (saved) => {
-        clearTimeout(timeout);
-        this.flushRequests.delete(contents);
-        if (saved) resolve();
-        else reject(new Error('The note did not acknowledge its save.'));
-      };
-      const timeout = setTimeout(() => {
-        finish(false);
-        this.stalledEditors.get(contents)?.();
-      }, 5000);
-    });
-    this.flushRequests.set(contents, { id, finish, promise });
-    try {
-      contents.send('editor:flush', id);
-    } catch {
-      finish(false);
-    }
-    return promise;
+    this.editorFlush.acknowledge(contents, id, saved);
   }
 
   public async flushAllEditors(): Promise<void> {
     this.flushingAll = true;
     const results = await Promise.allSettled(
-      [...this.noteWindows.values()].map((win) => this.flushEditor(win.webContents))
+      [...this.noteWindows.values()].map((win) => this.editorFlush.flush(win.webContents))
     );
     if (results.some((result) => result.status === 'rejected')) {
       throw new Error('One or more notes could not be saved.');
@@ -587,9 +530,7 @@ export class WindowManager {
 
   public resumeEditors(): void {
     this.flushingAll = false;
-    for (const contents of this.readyEditors) {
-      if (!contents.isDestroyed()) contents.send('editor:resume');
-    }
+    this.editorFlush.resumeAll();
   }
 
   /**
@@ -657,35 +598,7 @@ export class WindowManager {
       return { exported: false, count: 0 };
     }
 
-    let payload: string;
-    if (format === 'json') {
-      payload = JSON.stringify(
-        {
-          exportedAt: new Date().toISOString(),
-          version: app.getVersion(),
-          notes: notes.map((n) => ({
-            id: n.id,
-            title: n.title,
-            color: n.color,
-            is_pinned: Boolean(n.is_pinned),
-            created_at: n.created_at,
-            updated_at: n.updated_at,
-            content_plain: n.content_plain,
-            content_html: n.content_html,
-          })),
-        },
-        null,
-        2
-      );
-    } else {
-      payload = notes
-        .map((n) => {
-          const heading = n.title || 'Untitled Note';
-          const updated = new Date(n.updated_at).toISOString();
-          return `# ${heading}\n\n_Color: ${n.color} | Updated: ${updated}_\n\n${n.content_plain}\n`;
-        })
-        .join('\n---\n\n');
-    }
+    const payload = formatNoteExport(notes, format, app.getVersion(), new Date().toISOString());
 
     fs.writeFileSync(filePath, payload, { encoding: 'utf8', mode: 0o600 });
     return { exported: true, count: notes.length, filePath };
