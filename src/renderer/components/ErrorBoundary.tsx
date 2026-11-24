@@ -1,4 +1,4 @@
-import { Component, ErrorInfo, ReactNode } from 'react';
+import { Component, ReactNode } from 'react';
 import { AlertTriangle, RotateCcw } from 'lucide-react';
 
 interface Props {
@@ -20,8 +20,8 @@ export class ErrorBoundary extends Component<Props, State> {
     return { hasError: true, error };
   }
 
-  public componentDidCatch(error: Error, errorInfo: ErrorInfo): void {
-    console.error('Uncaught error in React render tree:', error, errorInfo);
+  public componentDidCatch(error: Error): void {
+    void window.stickyNotesAPI.logRendererError(error instanceof Error ? error.name : 'Error').catch(() => {});
   }
 
   private handleReload = (): void => {

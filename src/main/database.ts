@@ -13,6 +13,7 @@ import {
   NOTE_COLORS,
 } from '../shared/types';
 import { NoteCipher } from './crypto';
+import { logger } from './logger';
 
 interface ListOptions {
   search?: string;
@@ -174,7 +175,7 @@ export class DatabaseService {
         try {
           fs.unlinkSync(migrationBackup);
         } catch (cleanupError) {
-          console.error('Could not remove a redundant backup after a failed migration:', cleanupError);
+          logger.error('Could not remove a redundant backup after a failed migration', cleanupError);
         }
       }
       throw error;
