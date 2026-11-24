@@ -158,7 +158,9 @@ export const NoteView: React.FC<NoteViewProps> = ({ noteId }) => {
         handleNewNote();
       } else if (key === 'q' && !event.shiftKey) {
         event.preventDefault();
-        void window.stickyNotesAPI.quitApp().catch(() => {});
+        void window.stickyNotesAPI.quitApp().catch(() => {
+          setError('Could not quit Sticky Notes. Try again.');
+        });
       }
     };
     window.addEventListener('keydown', onKeyDown);
