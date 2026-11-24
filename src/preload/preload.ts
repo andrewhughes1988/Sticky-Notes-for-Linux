@@ -1,17 +1,12 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import { AppConfig, SettingChangeListener, StickyNotesAPI } from '../shared/types';
 
-// Parse CLI flags passed to this specific renderer window
-const args = process.argv;
-const noteIdArg = args.find((arg) => arg.startsWith('--note-id='));
-const windowTypeArg = args.find((arg) => arg.startsWith('--window-type='));
-
-const currentNoteId = noteIdArg ? noteIdArg.slice('--note-id='.length) : null;
-const windowType = windowTypeArg ? windowTypeArg.slice('--window-type='.length) : 'note';
+const identity = ipcRenderer.sendSync('window:getIdentity') as { noteId: string | null } | null;
+if (!identity) throw new Error('Unrecognized renderer.');
 
 const api: StickyNotesAPI = {
-  isNoteWindow: windowType === 'note',
-  noteId: currentNoteId,
+  isNoteWindow: identity.noteId !== null,
+  noteId: identity.noteId,
 
   createNote: (initial) => ipcRenderer.invoke('notes:create', initial),
   getNote: (id: string) => ipcRenderer.invoke('notes:getById', id),

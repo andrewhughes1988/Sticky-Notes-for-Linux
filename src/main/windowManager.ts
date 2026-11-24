@@ -90,6 +90,8 @@ export class WindowManager {
   private rendererUrl: URL;
   private readyEditors = new Set<WebContents>();
   private stalledEditors = new WeakMap<WebContents, () => void>();
+  private rendererProcesses = new WeakMap<WebContents, number>();
+  private recoveryPrompts = new Map<number, { controller: AbortController; exited: boolean }>();
   private approvedCloses = new Set<string>();
   private closingNotes = new Map<string, Promise<void>>();
   private flushRequests = new Map<
@@ -277,7 +279,6 @@ export class WindowManager {
         sandbox: true,
         webSecurity: true,
         spellcheck: false,
-        additionalArguments: [`--note-id=${note.id}`, '--window-type=note'],
       },
     });
 
@@ -378,7 +379,7 @@ export class WindowManager {
     win.once('closed', () => {
       if (resizeTimeout) clearTimeout(resizeTimeout);
     });
-    this.watchNoteRenderer(win, note.id);
+    this.watchNoteRenderer(win);
     void win.loadURL(this.rendererUrl.href).catch((error) => {
       logger.error('Failed to load note window', error);
     });
@@ -391,91 +392,97 @@ export class WindowManager {
     this.flushRequests.get(contents)?.finish(false);
   }
 
-  private watchNoteRenderer(win: BrowserWindow, noteId: string): void {
+  private watchNoteRenderer(win: BrowserWindow): void {
     const contents = win.webContents;
-    let activePrompt: AbortController | undefined;
-    let rendererExited = false;
+    contents.on('did-finish-load', () => {
+      this.rendererProcesses.set(contents, contents.getOSProcessId());
+    });
 
-    const dismissPrompt = () => {
-      activePrompt?.abort();
-      activePrompt = undefined;
+    const affectedWindows = (pid: number): Array<[string, BrowserWindow]> =>
+      [...this.noteWindows].filter(
+        ([, noteWindow]) =>
+          !noteWindow.isDestroyed() && this.rendererProcesses.get(noteWindow.webContents) === pid
+      );
+
+    const dismiss = (pid: number, keepStalled = false) => {
+      const prompt = this.recoveryPrompts.get(pid);
+      prompt?.controller.abort();
+      this.recoveryPrompts.delete(pid);
+      if (!keepStalled) {
+        for (const [, noteWindow] of affectedWindows(pid)) {
+          this.stalledEditors.delete(noteWindow.webContents);
+        }
+      }
     };
 
-    const offerRecovery = async (exited: boolean) => {
-      if (
-        this.isQuitting ||
-        win.isDestroyed() ||
-        this.noteWindows.get(noteId) !== win ||
-        activePrompt
-      ) {
-        return;
+    const offerRecovery = async (pid: number, exited: boolean) => {
+      const anchor = affectedWindows(pid)[0]?.[1];
+      if (this.isQuitting || !anchor) return;
+      const existing = this.recoveryPrompts.get(pid);
+      if (existing && (!exited || existing.exited)) return;
+      if (existing) dismiss(pid);
+      const controller = new AbortController();
+      const prompt = { controller, exited };
+      this.recoveryPrompts.set(pid, prompt);
+      let keepWaiting = false;
+      const recover = () => void offerRecovery(pid, exited);
+      for (const [, noteWindow] of affectedWindows(pid)) {
+        this.stalledEditors.set(noteWindow.webContents, recover);
       }
-      const prompt = new AbortController();
-      activePrompt = prompt;
       try {
-        const { response } = await dialog.showMessageBox(win, {
+        const { response } = await dialog.showMessageBox(anchor, {
           type: 'warning',
           title: 'Sticky Notes',
-          message: exited ? 'This note stopped unexpectedly.' : 'This note is not responding.',
-          detail: 'Reopening restores the last saved version. Unsaved changes may be lost.',
-          buttons: ['Reopen last saved note', exited ? 'Close note' : 'Keep waiting'],
+          message: exited ? 'The notes stopped unexpectedly.' : 'The notes are not responding.',
+          detail: 'Reopening restores the last saved versions. Unsaved changes may be lost.',
+          buttons: ['Reopen last saved notes', exited ? 'Close notes' : 'Keep waiting'],
           defaultId: exited ? 0 : 1,
           cancelId: 1,
-          signal: prompt.signal,
+          signal: controller.signal,
         });
-        if (
-          prompt.signal.aborted ||
-          this.isQuitting ||
-          win.isDestroyed() ||
-          this.noteWindows.get(noteId) !== win
-        ) {
-          return;
-        }
+        if (controller.signal.aborted || this.isQuitting) return;
+        const affected = affectedWindows(pid);
         if (response === 0) {
-          const saved = this.db.getNoteById(noteId);
-          if (!saved) throw new Error('The saved note no longer exists.');
-          const { x, y, width, height } = win.getBounds();
-          this.createNoteWindow({ ...saved, pos_x: x, pos_y: y, width, height });
-          win.destroy();
+          const saved = affected.map(([id, noteWindow]) => {
+            const note = this.db.getNoteById(id);
+            if (!note) throw new Error('A saved note no longer exists.');
+            const { x, y, width, height } = noteWindow.getBounds();
+            return { ...note, pos_x: x, pos_y: y, width, height };
+          });
+          for (const [, noteWindow] of affected) noteWindow.destroy();
+          for (const note of saved) this.createNoteWindow(note);
         } else if (exited) {
-          await this.closeNoteWindow(noteId);
+          await Promise.all(affected.map(([id]) => this.closeNoteWindow(id)));
+        } else {
+          keepWaiting = true;
         }
       } catch (error) {
-        if (!prompt.signal.aborted) {
-          logger.error('Could not recover note window', error);
+        if (!controller.signal.aborted) {
+          logger.error('Could not recover note windows', error);
           dialog.showErrorBox(
             'Note recovery failed',
-            'Check Notes Manager for the last saved version.'
+            'Check Notes Manager for the last saved versions.'
           );
         }
       } finally {
-        if (activePrompt === prompt) activePrompt = undefined;
+        if (this.recoveryPrompts.get(pid) === prompt) dismiss(pid, keepWaiting);
       }
     };
 
-    const recover = () => {
-      void offerRecovery(rendererExited);
-    };
     contents.on('unresponsive', () => {
-      if (!rendererExited) {
-        this.stalledEditors.set(contents, recover);
-        recover();
-      }
+      const pid = this.rendererProcesses.get(contents);
+      if (pid) void offerRecovery(pid, false);
     });
     contents.on('responsive', () => {
-      if (!rendererExited) {
-        this.stalledEditors.delete(contents);
-        dismissPrompt();
-      }
+      const pid = this.rendererProcesses.get(contents);
+      if (pid && !this.recoveryPrompts.get(pid)?.exited) dismiss(pid);
     });
     contents.on('render-process-gone', () => {
-      rendererExited = true;
+      const pid = this.rendererProcesses.get(contents) ?? -contents.id;
+      this.rendererProcesses.set(contents, pid);
       this.detachEditor(contents);
-      dismissPrompt();
-      this.stalledEditors.set(contents, recover);
-      recover();
+      void offerRecovery(pid, true);
     });
-    win.once('closed', dismissPrompt);
   }
 
   /**
@@ -753,7 +760,7 @@ export class WindowManager {
         sandbox: true,
         webSecurity: true,
         spellcheck: false,
-        additionalArguments: ['--window-type=manager'],
+        partition: 'inmemory:manager',
       },
     });
     this.managerWindow = managerWin;
