@@ -168,10 +168,13 @@ export class WindowManager {
       if (index < 4) {
         openOne();
       } else {
-        const timer = setTimeout(() => {
-          this.restoreTimers.delete(timer);
-          openOne();
-        }, (index - 3) * 35);
+        const timer = setTimeout(
+          () => {
+            this.restoreTimers.delete(timer);
+            openOne();
+          },
+          (index - 3) * 35
+        );
         this.restoreTimers.add(timer);
       }
     });
@@ -643,7 +646,8 @@ export class WindowManager {
         ? [{ name: 'JSON Backup', extensions: ['json'] }]
         : [{ name: 'Markdown Document', extensions: ['md'] }];
 
-    const parent = this.managerWindow && !this.managerWindow.isDestroyed() ? this.managerWindow : undefined;
+    const parent =
+      this.managerWindow && !this.managerWindow.isDestroyed() ? this.managerWindow : undefined;
     const dialogOptions = {
       title: 'Export Sticky Notes',
       defaultPath: path.join(app.getPath('documents'), `sticky-notes-${dateStamp}.${ext}`),
@@ -707,8 +711,7 @@ export class WindowManager {
   private resolveManagerBackgroundColor(): string {
     try {
       const theme = this.db.getAllSettings().theme;
-      const isDark =
-        theme === 'dark' || (theme === 'system' && nativeTheme.shouldUseDarkColors);
+      const isDark = theme === 'dark' || (theme === 'system' && nativeTheme.shouldUseDarkColors);
       return isDark ? '#202020' : '#F3F3F3';
     } catch {
       return nativeTheme.shouldUseDarkColors ? '#202020' : '#F3F3F3';

@@ -29,14 +29,18 @@ test('Linux autostart writes separate, escaped desktop entry arguments', (contex
   const manager = new AutostartManager();
   const autostartDir = path.join(config, 'autostart');
   const entryPath = path.join(autostartDir, 'sticky-notes.desktop');
-  const readExec = () => fs.readFileSync(entryPath, 'utf8').split('\n').find((line) => line.startsWith('Exec='));
+  const readExec = () =>
+    fs
+      .readFileSync(entryPath, 'utf8')
+      .split('\n')
+      .find((line) => line.startsWith('Exec='));
 
   assert.equal(manager.isEnabled(), false);
   manager.setEnabled(true);
   assert.equal(manager.isEnabled(), true);
   assert.equal(
     readExec(),
-    String.raw`Exec=/usr/bin/env -- "/tmp/Sticky Notes \\"Dollar\\$\\" Back\\\\slash 100%%.AppImage" "--ozone-platform=x11" "--class=com.netsysprep.stickynotes" --autostart`,
+    String.raw`Exec=/usr/bin/env -- "/tmp/Sticky Notes \\"Dollar\\$\\" Back\\\\slash 100%%.AppImage" "--ozone-platform=x11" "--class=com.netsysprep.stickynotes" --autostart`
   );
 
   delete process.env.DISPLAY;
@@ -45,7 +49,7 @@ test('Linux autostart writes separate, escaped desktop entry arguments', (contex
   manager.setEnabled(true);
   assert.equal(
     readExec(),
-    'Exec=flatpak run com.netsysprep.stickynotes "--class=com.netsysprep.stickynotes" --autostart',
+    'Exec=flatpak run com.netsysprep.stickynotes "--class=com.netsysprep.stickynotes" --autostart'
   );
   delete process.env.FLATPAK_ID;
 
@@ -54,7 +58,7 @@ test('Linux autostart writes separate, escaped desktop entry arguments', (contex
   manager.setEnabled(true);
   assert.equal(
     readExec(),
-    'Exec=snap run sticky-notes_work "--class=com.netsysprep.stickynotes" --autostart',
+    'Exec=snap run sticky-notes_work "--class=com.netsysprep.stickynotes" --autostart'
   );
 
   manager.setEnabled(false);

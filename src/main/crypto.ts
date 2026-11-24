@@ -75,9 +75,7 @@ interface ElectronSafeStorageLike {
   getSelectedStorageBackend?: () => string;
 }
 
-export function createElectronKeyringAdapter(
-  safeStorage: ElectronSafeStorageLike
-): KeyringAdapter {
+export function createElectronKeyringAdapter(safeStorage: ElectronSafeStorageLike): KeyringAdapter {
   const getBackend = (): string => {
     try {
       return safeStorage.getSelectedStorageBackend?.() ?? 'system';
