@@ -1,3 +1,4 @@
+import { IPC_CHANNELS } from '../shared/ipc';
 import { app, ipcMain, IpcMainInvokeEvent, shell } from 'electron';
 import { DatabaseService } from './database';
 import { WindowManager } from './windowManager';
@@ -94,7 +95,7 @@ export function registerIpcHandlers(
     return id;
   }
 
-  ipcMain.handle('notes:create', (event, value?: unknown) => {
+  ipcMain.handle(IPC_CHANNELS.NOTES_CREATE, (event, value?: unknown) => {
     windowManager.rendererRole(event);
     if (value === undefined) return windowManager.createNewNoteWindow();
     const { color } = readFields(value, ['color']);
@@ -103,9 +104,11 @@ export function registerIpcHandlers(
     );
   });
 
-  ipcMain.handle('notes:getById', (event, id: unknown) => db.getNoteById(requireNote(event, id)));
+  ipcMain.handle(IPC_CHANNELS.NOTES_GET_BY_ID, (event, id: unknown) =>
+    db.getNoteById(requireNote(event, id))
+  );
 
-  ipcMain.handle('notes:getPreviews', (event, value: unknown) => {
+  ipcMain.handle(IPC_CHANNELS.NOTES_GET_PREVIEWS, (event, value: unknown) => {
     requireManager(event);
     const { search, limit, offset } =
       value === undefined ? {} : readFields(value, ['search', 'limit', 'offset']);
@@ -116,55 +119,55 @@ export function registerIpcHandlers(
     return db.getNotePreviews(query);
   });
 
-  ipcMain.handle('notes:update', (event, value: unknown, input: unknown) => {
+  ipcMain.handle(IPC_CHANNELS.NOTES_UPDATE, (event, value: unknown, input: unknown) => {
     const id = requireNote(event, value);
     const updates = validateNoteUpdates(input);
     const saved = db.updateNote(id, updates);
     if (!saved) throw new Error('Note no longer exists.');
-    windowManager.broadcast('notes:changed');
+    windowManager.broadcast(IPC_CHANNELS.NOTES_CHANGED);
     return saved;
   });
 
-  ipcMain.handle('notes:closeWindow', (event, id: unknown) =>
+  ipcMain.handle(IPC_CHANNELS.NOTES_CLOSE_WINDOW, (event, id: unknown) =>
     windowManager.closeNoteWindow(requireNote(event, id))
   );
-  ipcMain.handle('notes:openWindow', (event, id: unknown) => {
+  ipcMain.handle(IPC_CHANNELS.NOTES_OPEN_WINDOW, (event, id: unknown) => {
     requireManager(event);
     windowManager.openNote(readText(id, 128));
   });
-  ipcMain.handle('notes:delete', (event, id: unknown) =>
+  ipcMain.handle(IPC_CHANNELS.NOTES_DELETE, (event, id: unknown) =>
     windowManager.deleteNote(requireNote(event, id, true))
   );
-  ipcMain.handle('notes:togglePin', (event, id: unknown) =>
+  ipcMain.handle(IPC_CHANNELS.NOTES_TOGGLE_PIN, (event, id: unknown) =>
     windowManager.toggleNotePin(requireNote(event, id))
   );
 
   // Trash & Backup Lifecycle (Manager-only)
-  ipcMain.handle('notes:getDeleted', (event) => {
+  ipcMain.handle(IPC_CHANNELS.NOTES_GET_DELETED, (event) => {
     requireManager(event);
     return db.getDeletedNotes();
   });
-  ipcMain.handle('notes:restore', (event, id: unknown) => {
+  ipcMain.handle(IPC_CHANNELS.NOTES_RESTORE, (event, id: unknown) => {
     requireManager(event);
     windowManager.restoreNote(readText(id, 128));
   });
-  ipcMain.handle('notes:deletePermanent', (event, id: unknown) => {
+  ipcMain.handle(IPC_CHANNELS.NOTES_DELETE_PERMANENT, (event, id: unknown) => {
     requireManager(event);
     windowManager.permanentlyDeleteNote(readText(id, 128));
   });
-  ipcMain.handle('notes:emptyTrash', (event) => {
+  ipcMain.handle(IPC_CHANNELS.NOTES_EMPTY_TRASH, (event) => {
     requireManager(event);
     windowManager.emptyTrash();
   });
-  ipcMain.handle('notes:export', (event, format: unknown) => {
+  ipcMain.handle(IPC_CHANNELS.NOTES_EXPORT, (event, format: unknown) => {
     requireManager(event);
     return windowManager.exportNotes(readExportFormat(format));
   });
-  ipcMain.handle('backups:count', (event) => {
+  ipcMain.handle(IPC_CHANNELS.BACKUPS_COUNT, (event) => {
     requireManager(event);
     return db.listMigrationBackups().length;
   });
-  ipcMain.handle('backups:purge', (event) => {
+  ipcMain.handle(IPC_CHANNELS.BACKUPS_PURGE, (event) => {
     requireManager(event);
     return db.purgeMigrationBackups();
   });
@@ -176,12 +179,12 @@ export function registerIpcHandlers(
     backend: keyring.backendName(),
   });
 
-  ipcMain.handle('security:getEncryptionStatus', (event) => {
+  ipcMain.handle(IPC_CHANNELS.SECURITY_GET_ENCRYPTION_STATUS, (event) => {
     requireManager(event);
     return readEncryptionStatus();
   });
 
-  ipcMain.handle('security:setEncryption', (event, enabled: unknown) => {
+  ipcMain.handle(IPC_CHANNELS.SECURITY_SET_ENCRYPTION, (event, enabled: unknown) => {
     requireManager(event);
     if (typeof enabled !== 'boolean') throw new Error('Invalid encryption flag.');
     if (enabled) {
@@ -200,19 +203,19 @@ export function registerIpcHandlers(
   });
 
   // Manager & App Controls
-  ipcMain.handle('manager:show', (event) => {
+  ipcMain.handle(IPC_CHANNELS.MANAGER_SHOW, (event) => {
     windowManager.rendererRole(event);
     windowManager.showManagerWindow();
   });
-  ipcMain.handle('manager:close', (event) => {
+  ipcMain.handle(IPC_CHANNELS.MANAGER_CLOSE, (event) => {
     requireManager(event);
     windowManager.closeManagerWindow();
   });
-  ipcMain.handle('app:quit', (event) => {
+  ipcMain.handle(IPC_CHANNELS.APP_QUIT, (event) => {
     windowManager.rendererRole(event);
     app.quit();
   });
-  ipcMain.handle('shell:openExternal', async (event, rawUrl: unknown) => {
+  ipcMain.handle(IPC_CHANNELS.SHELL_OPEN_EXTERNAL, async (event, rawUrl: unknown) => {
     windowManager.rendererRole(event);
     const url = readText(rawUrl, 4096);
     const safeUrl = parseSafeExternalUrl(url);
@@ -221,7 +224,7 @@ export function registerIpcHandlers(
   });
 
   // Editor Flush Handshake
-  ipcMain.on('editor:ready', (event) => {
+  ipcMain.on(IPC_CHANNELS.EDITOR_READY, (event) => {
     try {
       if (windowManager.rendererRole(event).noteId !== null) {
         windowManager.markEditorReady(event.sender);
@@ -231,7 +234,7 @@ export function registerIpcHandlers(
     }
   });
 
-  ipcMain.on('editor:unready', (event) => {
+  ipcMain.on(IPC_CHANNELS.EDITOR_UNREADY, (event) => {
     try {
       if (windowManager.rendererRole(event).noteId !== null) {
         windowManager.markEditorUnready(event.sender);
@@ -241,7 +244,7 @@ export function registerIpcHandlers(
     }
   });
 
-  ipcMain.on('editor:flushed', (event, id: unknown, saved: unknown) => {
+  ipcMain.on(IPC_CHANNELS.EDITOR_FLUSHED, (event, id: unknown, saved: unknown) => {
     try {
       if (
         windowManager.rendererRole(event).noteId !== null &&
@@ -256,17 +259,17 @@ export function registerIpcHandlers(
   });
 
   // Settings (Manager-only)
-  ipcMain.handle('settings:getAll', (event) => {
+  ipcMain.handle(IPC_CHANNELS.SETTINGS_GET_ALL, (event) => {
     requireManager(event);
     return { ...db.getAllSettings(), autostart: autostartManager.isEnabled() };
   });
 
-  ipcMain.handle('settings:set', (event, key: unknown, value: unknown) => {
+  ipcMain.handle(IPC_CHANNELS.SETTINGS_SET, (event, key: unknown, value: unknown) => {
     requireManager(event);
     if (key === 'theme') {
       const theme = readTheme(value);
       db.setSetting('theme', theme);
-      windowManager.broadcast('settings:changed', 'theme', theme);
+      windowManager.broadcast(IPC_CHANNELS.SETTINGS_CHANGED, 'theme', theme);
       return;
     }
     if (key === 'autostart' && typeof value === 'boolean') {
@@ -282,7 +285,7 @@ export function registerIpcHandlers(
         }
         throw error;
       }
-      windowManager.broadcast('settings:changed', 'autostart', value);
+      windowManager.broadcast(IPC_CHANNELS.SETTINGS_CHANGED, 'autostart', value);
       return;
     }
     throw new Error('Invalid setting.');
