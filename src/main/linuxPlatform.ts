@@ -1,3 +1,5 @@
+import type { WindowBounds } from './database';
+
 export const DESKTOP_FILE_NAME = 'sticky-notes-linux.desktop';
 export const WINDOW_WM_CLASS = 'com.netsysprep.stickynotes';
 
@@ -38,4 +40,15 @@ export function buildLinuxLaunchArgs(env: NodeJS.ProcessEnv): string[] {
   }
   args.push(`--class=${WINDOW_WM_CLASS}`);
   return args;
+}
+
+export function preserveWaylandPosition(
+  bounds: WindowBounds,
+  saved: WindowBounds | null,
+  isNativeWayland: boolean
+): WindowBounds {
+  if (isNativeWayland && bounds.x === 0 && bounds.y === 0 && saved) {
+    return { ...bounds, x: saved.x, y: saved.y };
+  }
+  return bounds;
 }

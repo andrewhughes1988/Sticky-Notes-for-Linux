@@ -18,7 +18,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import { DatabaseService, WindowBounds } from './database';
 import { parseSafeExternalUrl } from './htmlSanitizer';
-import { isRunningOnNativeWayland } from './linuxPlatform';
+import { isRunningOnNativeWayland, preserveWaylandPosition } from './linuxPlatform';
 import { logger } from './logger';
 import { Note, NOTE_COLORS, ExportResult } from '../shared/types';
 
@@ -775,7 +775,7 @@ export class WindowManager {
       managerBoundsTimer = setTimeout(() => {
         if (managerWin.isDestroyed()) return;
         try {
-          this.db.setManagerBounds(managerWin.getBounds());
+          this.saveManagerBounds(managerWin);
         } catch (error) {
           logger.error('Failed to save manager window bounds', error);
         }
@@ -791,7 +791,7 @@ export class WindowManager {
       }
       if (!managerWin.isDestroyed()) {
         try {
-          this.db.setManagerBounds(managerWin.getBounds());
+          this.saveManagerBounds(managerWin);
         } catch {
           // Ignore
         }
@@ -851,6 +851,13 @@ export class WindowManager {
     this.isQuitting = quitting;
   }
 
+  private saveManagerBounds(win: BrowserWindow): void {
+    const bounds = win.getBounds();
+    const saved =
+      this.isNativeWayland && bounds.x === 0 && bounds.y === 0 ? this.db.getManagerBounds() : null;
+    this.db.setManagerBounds(preserveWaylandPosition(bounds, saved, this.isNativeWayland));
+  }
+
   public flushAllOpenNoteBounds(): void {
     for (const [id, win] of this.noteWindows.entries()) {
       if (!win.isDestroyed()) {
@@ -871,7 +878,7 @@ export class WindowManager {
     }
     if (this.managerWindow && !this.managerWindow.isDestroyed()) {
       try {
-        this.db.setManagerBounds(this.managerWindow.getBounds());
+        this.saveManagerBounds(this.managerWindow);
       } catch {
         // Ignore
       }

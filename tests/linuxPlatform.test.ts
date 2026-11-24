@@ -4,6 +4,7 @@ import {
   buildLinuxLaunchArgs,
   DESKTOP_FILE_NAME,
   isRunningOnNativeWayland,
+  preserveWaylandPosition,
   WINDOW_WM_CLASS,
 } from '../src/main/linuxPlatform';
 
@@ -39,4 +40,19 @@ test('buildLinuxLaunchArgs supplies --ozone-platform=x11 when DISPLAY is set and
   ]);
   assert.equal(DESKTOP_FILE_NAME, 'sticky-notes-linux.desktop');
   assert.equal(WINDOW_WM_CLASS, 'com.netsysprep.stickynotes');
+});
+
+test('native Wayland retains saved coordinates while recording the current size', () => {
+  const current = { x: 0, y: 0, width: 510, height: 720 };
+  const saved = { x: 120, y: 140, width: 400, height: 640 };
+  assert.deepEqual(preserveWaylandPosition(current, saved, true), {
+    x: 120,
+    y: 140,
+    width: 510,
+    height: 720,
+  });
+  assert.deepEqual(preserveWaylandPosition(current, saved, false), current);
+  assert.deepEqual(preserveWaylandPosition(current, null, true), current);
+  const moved = { ...current, x: 35, y: 45 };
+  assert.deepEqual(preserveWaylandPosition(moved, saved, true), moved);
 });
