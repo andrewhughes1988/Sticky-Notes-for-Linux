@@ -188,3 +188,73 @@ test('note and manager controls expose their state and perform their actions', a
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('window manager rejects subframes and waits for the matching editor acknowledgement', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sticky-frame-e2e-'));
+  let app: ElectronApplication | undefined;
+  try {
+    app = await electron.launch({
+      args: [...(process.env.CI ? ['--no-sandbox'] : []), '--ozone-platform=x11', '.'],
+      cwd: process.cwd(),
+      env: {
+        ...process.env,
+        XDG_DATA_HOME: path.join(root, 'data'),
+        XDG_CONFIG_HOME: path.join(root, 'config'),
+        XDG_STATE_HOME: path.join(root, 'state'),
+      },
+    });
+    await app.firstWindow();
+    const result = await app.evaluate(async () => {
+      const { createRequire } = process.getBuiltinModule(
+        'node:module'
+      ) as typeof import('node:module');
+      const require = createRequire(process.cwd() + '/package.json');
+      const { register } = require('tsx/cjs/api') as typeof import('tsx/cjs/api');
+      const { pathToFileURL } = require('node:url') as typeof import('node:url');
+      const path = require('node:path') as typeof import('node:path');
+      register();
+      const { WindowManager } = require(
+        path.join(process.cwd(), 'src/main/windowManager.ts')
+      ) as typeof import('../src/main/windowManager');
+      const manager = new WindowManager({} as never);
+      const state = manager as unknown as { noteWindows: Map<string, { webContents: unknown }> };
+      const mainFrame = { url: pathToFileURL(path.join(process.cwd(), 'dist/index.html')).href };
+      let sentId = 0;
+      const sender = {
+        mainFrame,
+        send: (_channel: string, id: number) => {
+          sentId = id;
+        },
+      };
+      state.noteWindows.set('one', { webContents: sender });
+      const event = { sender, senderFrame: mainFrame } as never;
+      const role = manager.rendererRole(event);
+      let rejectedSubframe = false;
+      try {
+        manager.rendererRole({ sender, senderFrame: { url: mainFrame.url } } as never);
+      } catch {
+        rejectedSubframe = true;
+      }
+      manager.markEditorReady(sender as never);
+      let completed = false;
+      const flush = manager.flushAllEditors().then(() => {
+        completed = true;
+      });
+      manager.acknowledgeEditorFlush(sender as never, sentId + 1, true);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      const waitedForMatchingId = !completed;
+      manager.acknowledgeEditorFlush(sender as never, sentId, true);
+      await flush;
+      return { role, rejectedSubframe, waitedForMatchingId, completed };
+    });
+    expect(result).toEqual({
+      role: { noteId: 'one' },
+      rejectedSubframe: true,
+      waitedForMatchingId: true,
+      completed: true,
+    });
+  } finally {
+    if (app) await app.close().catch(() => {});
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
