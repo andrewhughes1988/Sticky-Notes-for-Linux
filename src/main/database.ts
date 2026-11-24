@@ -13,6 +13,8 @@ import {
   NOTE_COLORS,
 } from '../shared/types';
 import { NoteCipher } from './crypto';
+import { createSearchQuery, excerptAroundMatch } from './noteSearch';
+import { backUpBeforeMigration } from './migrationBackup';
 
 interface ListOptions {
   search?: string;
@@ -36,62 +38,6 @@ const DEFAULT_SETTINGS: AppConfig = {
 };
 const VALID_THEMES = new Set<AppTheme>(['system', 'light', 'dark']);
 const ASCII_ONLY = /^[\x20-\x7E]+$/;
-
-function createSearchQuery(search?: string) {
-  const terms = [...new Set(search?.match(/[\p{L}\p{M}\p{N}]+/gu))];
-  const indexedTerms: string[] = [];
-  const shortTerms: string[] = [];
-  for (const term of terms) {
-    ([...term].length >= 3 ? indexedTerms : shortTerms).push(term);
-  }
-  return {
-    indexedTerms,
-    shortTerms,
-    indexedQuery: indexedTerms.map((term) => `"${term}"`).join(' AND '),
-    punctuationOnly: Boolean(search?.trim()) && !terms.length,
-  };
-}
-
-function originalOffset(text: string, foldedOffset: number): number {
-  let offset = 0;
-  for (const character of text) {
-    const foldedLength = character.toLowerCase().length;
-    if (foldedOffset < foldedLength) break;
-    foldedOffset -= foldedLength;
-    offset += character.length;
-  }
-  return offset;
-}
-
-function excerptAroundMatch(text: string, foldedTerms: string[]): string | undefined {
-  const folded = text.toLowerCase();
-  let matchIndex = -1;
-  let matchLength = 0;
-  for (const term of foldedTerms) {
-    const index = folded.indexOf(term);
-    if (
-      index >= 0 &&
-      (term.length > matchLength || (term.length === matchLength && index < matchIndex))
-    ) {
-      matchIndex = index;
-      matchLength = term.length;
-    }
-  }
-  if (matchIndex === -1) return;
-
-  // Lowercasing can expand a character, for example dotted capital I.
-  const matchStart = folded.length === text.length ? matchIndex : originalOffset(text, matchIndex);
-  const foldedEnd = matchIndex + matchLength - 1;
-  const matchEnd =
-    folded.length === text.length ? foldedEnd + 1 : originalOffset(text, foldedEnd) + 1;
-  let start = Math.max(0, matchStart - 32);
-  let end = Math.min(text.length, Math.max(matchEnd + 48, start + 100));
-  // Keep surrogate pairs intact at the cut boundaries.
-  if (/[\uDC00-\uDFFF]/.test(text.charAt(start))) start--;
-  if (/[\uDC00-\uDFFF]/.test(text.charAt(end))) end++;
-  const excerpt = text.slice(start, end).replace(/\s+/g, ' ').trim();
-  return `${start > 0 ? '…' : ''}${excerpt}${end < text.length ? '…' : ''}`;
-}
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -162,7 +108,7 @@ export class DatabaseService {
               .prepare("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'notes'")
               .get()
           ) {
-            migrationBackup = this.backUpBeforeMigration(version);
+            migrationBackup = backUpBeforeMigration(this.dbPath, SCHEMA_VERSION, version);
           }
           this.initSchema(version);
           this.initStatements();
@@ -265,50 +211,6 @@ export class DatabaseService {
       INSERT INTO settings (key, value) VALUES (?, ?)
       ON CONFLICT(key) DO UPDATE SET value = excluded.value
     `);
-  }
-
-  private backUpBeforeMigration(version: number): string {
-    const directory = path.dirname(this.dbPath);
-    const temp = fs.mkdtempSync(path.join(directory, '.sticky-notes-backup-'));
-    try {
-      const snapshot = path.join(temp, 'snapshot.db');
-      fs.closeSync(fs.openSync(snapshot, 'wx', 0o600));
-      // The primary connection holds the write lock. A second connection can copy the committed WAL snapshot.
-      const source = new Database(this.dbPath, { readonly: true });
-      try {
-        source.prepare('VACUUM INTO ?').run(snapshot);
-      } finally {
-        source.close();
-      }
-      const copy = new Database(snapshot, { readonly: true });
-      try {
-        if (
-          copy.pragma('user_version', { simple: true }) !== version ||
-          copy.pragma('integrity_check(1)', { simple: true }) !== 'ok'
-        ) {
-          throw new Error('The notes migration backup failed its integrity check');
-        }
-      } finally {
-        copy.close();
-      }
-      const snapshotFd = fs.openSync(snapshot, 'r');
-      try {
-        fs.fsyncSync(snapshotFd);
-      } finally {
-        fs.closeSync(snapshotFd);
-      }
-      const backup = `${this.dbPath}.pre-v${SCHEMA_VERSION}-${crypto.randomUUID()}.bak`;
-      fs.linkSync(snapshot, backup);
-      const directoryFd = fs.openSync(directory, 'r');
-      try {
-        fs.fsyncSync(directoryFd);
-      } finally {
-        fs.closeSync(directoryFd);
-      }
-      return backup;
-    } finally {
-      fs.rmSync(temp, { recursive: true, force: true });
-    }
   }
 
   private initSchema(version: number): void {

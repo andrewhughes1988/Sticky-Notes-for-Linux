@@ -2,6 +2,9 @@ import React, { Suspense, lazy } from 'react';
 import ReactDOM from 'react-dom/client';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import './styles/index.css';
+import './styles/manager.css';
+import './styles/dialogs.css';
+import './styles/footer.css';
 
 const NoteView = lazy(() => import('./components/NoteView'));
 const ManagerView = lazy(() => import('./components/ManagerView'));
