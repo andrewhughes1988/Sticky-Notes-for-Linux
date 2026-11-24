@@ -6,7 +6,7 @@ import jsxA11y from 'eslint-plugin-jsx-a11y';
 
 export default tseslint.config(
   {
-    ignores: ['dist/**', 'dist-electron/**', 'release/**', 'node_modules/**', 'scripts/**'],
+    ignores: ['dist/**', 'dist-electron/**', 'release/**', 'node_modules/**'],
   },
   js.configs.recommended,
   ...tseslint.configs.recommended,
@@ -34,12 +34,19 @@ export default tseslint.config(
       'src/shared/**/*.ts',
       'tests/**/*.ts',
       'e2e/**/*.ts',
+      'scripts/**/*.js',
       'playwright.config.ts',
     ],
     languageOptions: {
       globals: {
         ...globals.node,
       },
+    },
+  },
+  {
+    files: ['scripts/**/*.js'],
+    rules: {
+      '@typescript-eslint/no-require-imports': 'off',
     },
   },
   {
