@@ -8,6 +8,7 @@ import { parseSafeExternalUrl } from './htmlSanitizer';
 import { AesGcmNoteCipher, createElectronKeyringAdapter } from './crypto';
 import { DESKTOP_FILE_NAME, WINDOW_WM_CLASS } from './linuxPlatform';
 import { logger } from './logger';
+import { createFatalErrorHandler } from './fatalError';
 
 // NOTE: Do NOT call app.commandLine.appendSwitch('ozone-platform', ...) here.
 // In Electron 38+, the Browser process initializes Ozone before main.js executes;
@@ -24,9 +25,16 @@ if (process.platform === 'win32' || process.platform === 'linux') {
 }
 
 // Global fatal error & unhandled rejection logging
-process.on('uncaughtException', (error) => {
-  logger.error('Uncaught exception in main process', error);
-});
+let closeDatabaseAfterFatalError: (() => void) | undefined;
+process.on(
+  'uncaughtException',
+  createFatalErrorHandler({
+    log: (error) => logger.error('Uncaught exception in main process', error),
+    closeDatabase: () => closeDatabaseAfterFatalError?.(),
+    exit: (code) => app.exit(code),
+    forceExit: (code) => process.exit(code),
+  })
+);
 process.on('unhandledRejection', (reason) => {
   logger.error('Unhandled promise rejection in main process', reason);
 });
@@ -74,6 +82,7 @@ if (!gotTheLock) {
 
       // 1. Initialize core services
       db = new DatabaseService();
+      closeDatabaseAfterFatalError = () => db.close();
       const keyring = createElectronKeyringAdapter(safeStorage);
       if (db.isEncryptionEnabled()) {
         const wrapped = db.getWrappedEncryptionKey();
