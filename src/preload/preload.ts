@@ -27,6 +27,7 @@ const api: StickyNotesAPI = {
   permanentlyDeleteNote: (id: string) => ipcRenderer.invoke('notes:deletePermanent', id),
   emptyTrash: () => ipcRenderer.invoke('notes:emptyTrash'),
   exportNotes: (format) => ipcRenderer.invoke('notes:export', format),
+  importNotes: () => ipcRenderer.invoke('notes:import'),
   getMigrationBackupCount: () => ipcRenderer.invoke('backups:count'),
   purgeMigrationBackups: () => ipcRenderer.invoke('backups:purge'),
 

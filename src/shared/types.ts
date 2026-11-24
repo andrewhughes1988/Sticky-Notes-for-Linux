@@ -229,6 +229,7 @@ export interface StickyNotesAPI {
   permanentlyDeleteNote: (id: string) => Promise<void>;
   emptyTrash: () => Promise<void>;
   exportNotes: (format: 'json' | 'markdown') => Promise<ExportResult>;
+  importNotes: () => Promise<{ imported: boolean; count: number }>;
   getMigrationBackupCount: () => Promise<number>;
   purgeMigrationBackups: () => Promise<number>;
 

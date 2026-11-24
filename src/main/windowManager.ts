@@ -20,6 +20,7 @@ import { DatabaseService, WindowBounds } from './database';
 import { parseSafeExternalUrl } from './htmlSanitizer';
 import { isRunningOnNativeWayland } from './linuxPlatform';
 import { logger } from './logger';
+import { parseBackup, snapshotAfterFlush } from './backupImport';
 import { Note, NOTE_COLORS, ExportResult } from '../shared/types';
 
 function isPositionVisible(x: number, y: number): boolean {
@@ -635,7 +636,6 @@ export class WindowManager {
    * Export all active notes as JSON or Markdown via native save dialog.
    */
   public async exportNotes(format: 'json' | 'markdown'): Promise<ExportResult> {
-    const notes = this.db.getAllNotes();
     const dateStamp = new Date().toISOString().slice(0, 10);
     const ext = format === 'json' ? 'json' : 'md';
     const filters =
@@ -656,6 +656,24 @@ export class WindowManager {
     if (canceled || !filePath) {
       return { exported: false, count: 0 };
     }
+
+    const editors = [...this.noteWindows.values()].map((win) => win.webContents);
+    const notes = await snapshotAfterFlush(
+      async () => {
+        const results = await Promise.allSettled(editors.map((contents) => this.flushEditor(contents)));
+        if (results.some((result) => result.status === 'rejected')) {
+          throw new Error('One or more notes could not be saved.');
+        }
+      },
+      () => this.db.getAllNotes(),
+      () => {
+        if (!this.flushingAll) {
+          for (const contents of editors) {
+            if (this.readyEditors.has(contents) && !contents.isDestroyed()) contents.send('editor:resume');
+          }
+        }
+      }
+    );
 
     let payload: string;
     if (format === 'json') {
@@ -689,6 +707,22 @@ export class WindowManager {
 
     fs.writeFileSync(filePath, payload, { encoding: 'utf8', mode: 0o600 });
     return { exported: true, count: notes.length, filePath };
+  }
+
+  public async importNotes(): Promise<{ imported: boolean; count: number }> {
+    const options: Electron.OpenDialogOptions = {
+      title: 'Import Sticky Notes Backup',
+      properties: ['openFile'],
+      filters: [{ name: 'JSON Backup', extensions: ['json'] }],
+    };
+    const parent = this.managerWindow && !this.managerWindow.isDestroyed() ? this.managerWindow : undefined;
+    const result = parent ? await dialog.showOpenDialog(parent, options) : await dialog.showOpenDialog(options);
+    if (result.canceled || !result.filePaths[0]) return { imported: false, count: 0 };
+    const file = result.filePaths[0];
+    const notes = parseBackup(JSON.parse(fs.readFileSync(file, 'utf8')));
+    this.db.importNotes(notes);
+    this.broadcast('notes:changed');
+    return { imported: true, count: notes.length };
   }
 
   /**

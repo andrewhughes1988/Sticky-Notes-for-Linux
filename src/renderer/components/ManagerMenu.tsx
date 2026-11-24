@@ -1,5 +1,5 @@
 import React, { useLayoutEffect, useRef } from 'react';
-import { Download, FileText, Lock, Moon, Sun, Trash2, Power, ShieldAlert } from 'lucide-react';
+import { Download, Upload, FileText, Lock, Moon, Sun, Trash2, Power, ShieldAlert } from 'lucide-react';
 import { EncryptionStatus } from '../../shared/types';
 
 interface ManagerMenuProps {
@@ -17,6 +17,7 @@ interface ManagerMenuProps {
   onRetrySettings: () => void;
   onToggleEncryption: (enabled: boolean) => void;
   onToggleTrashView: () => void;
+  onImportJson: () => void;
   onExportJson: () => void;
   onExportMarkdown: () => void;
   onPurgeBackups: () => void;
@@ -38,6 +39,7 @@ const ManagerMenuComponent: React.FC<ManagerMenuProps> = ({
   onRetrySettings,
   onToggleEncryption,
   onToggleTrashView,
+  onImportJson,
   onExportJson,
   onExportMarkdown,
   onPurgeBackups,
@@ -168,6 +170,13 @@ const ManagerMenuComponent: React.FC<ManagerMenuProps> = ({
           <span className="manager-menu-item-left">
             <Trash2 size={15} aria-hidden="true" />
             <span>{isTrashView ? 'Back to notes' : 'Open Trash'}</span>
+          </span>
+        </button>
+
+        <button type="button" className="manager-menu-item" onClick={() => { onImportJson(); onClose(); }}>
+          <span className="manager-menu-item-left">
+            <Upload size={15} aria-hidden="true" />
+            <span>Import JSON backup</span>
           </span>
         </button>
 

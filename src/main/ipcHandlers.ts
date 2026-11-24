@@ -160,6 +160,10 @@ export function registerIpcHandlers(
     requireManager(event);
     return windowManager.exportNotes(readExportFormat(format));
   });
+  ipcMain.handle('notes:import', (event) => {
+    requireManager(event);
+    return windowManager.importNotes();
+  });
   ipcMain.handle('backups:count', (event) => {
     requireManager(event);
     return db.listMigrationBackups().length;
