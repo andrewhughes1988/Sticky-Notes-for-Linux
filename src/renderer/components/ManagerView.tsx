@@ -44,6 +44,8 @@ export const ManagerView: React.FC = () => {
   const [encryption, setEncryption] = useState<EncryptionStatus | null>(null);
   const [isUpdatingEncryption, setIsUpdatingEncryption] = useState(false);
   const [backupCount, setBackupCount] = useState(0);
+  const [backupLoadError, setBackupLoadError] = useState(false);
+  const [encryptionLoadError, setEncryptionLoadError] = useState(false);
   const [settingsRetry, setSettingsRetry] = useState(0);
   const [revision, setRevision] = useState(0);
   const requestId = useRef(0);
@@ -158,11 +160,24 @@ export const ManagerView: React.FC = () => {
             const legacy = localStorage.getItem('manager_theme');
             if ((legacy === 'dark' || legacy === 'light') && config.theme === 'system') {
               resolvedTheme = legacy;
-              void window.stickyNotesAPI.setConfig('theme', legacy).catch(() => {});
+              void window.stickyNotesAPI.setConfig('theme', legacy).then(
+                () => {
+                  try {
+                    if (localStorage.getItem('manager_theme') === legacy)
+                      localStorage.removeItem('manager_theme');
+                  } catch {
+                    console.error('Could not remove the migrated theme preference.');
+                  }
+                },
+                () => {
+                  if (active) setActionError('Could not save the previous theme preference.');
+                }
+              );
+            } else if (legacy !== null) {
+              localStorage.removeItem('manager_theme');
             }
-            if (legacy !== null) localStorage.removeItem('manager_theme');
           } catch {
-            // Ignore storage access errors
+            console.error('Could not access the previous theme preference.');
           }
           setThemePref(resolvedTheme);
         }
@@ -177,16 +192,29 @@ export const ManagerView: React.FC = () => {
     window.stickyNotesAPI
       .getMigrationBackupCount()
       .then((count) => {
-        if (active) setBackupCount(count);
+        if (active) {
+          setBackupCount(count);
+          setBackupLoadError(false);
+        }
       })
-      .catch(() => {});
+      .catch(() => {
+        if (active) setBackupLoadError(true);
+      });
 
     window.stickyNotesAPI
       .getEncryptionStatus()
       .then((status) => {
-        if (active) setEncryption(status);
+        if (active) {
+          setEncryption(status);
+          setEncryptionLoadError(false);
+        }
       })
-      .catch(() => {});
+      .catch(() => {
+        if (active) {
+          setEncryption(null);
+          setEncryptionLoadError(true);
+        }
+      });
 
     return () => {
       active = false;
@@ -211,7 +239,9 @@ export const ManagerView: React.FC = () => {
           setTimeout(() => searchInputRef.current?.focus(), 0);
         } else if (key === 'q' && !event.shiftKey) {
           event.preventDefault();
-          void window.stickyNotesAPI.quitApp().catch(() => {});
+          void window.stickyNotesAPI.quitApp().catch(() => {
+            setActionError('Could not quit Sticky Notes. Try again.');
+          });
         }
       } else if (
         event.key === 'Escape' &&
@@ -563,6 +593,19 @@ export const ManagerView: React.FC = () => {
         </div>
       )}
 
+      {(backupLoadError || encryptionLoadError) && (
+        <p className="manager-status manager-status-error" role="alert">
+          {backupLoadError && 'Could not load backup information. '}
+          {encryptionLoadError && 'Could not load encryption status. '}
+          <button
+            type="button"
+            className="inline-retry-btn"
+            onClick={() => setSettingsRetry((n) => n + 1)}
+          >
+            Retry
+          </button>
+        </p>
+      )}
       {actionError && (
         <p className="manager-status manager-status-error" role="alert">
           {actionError}

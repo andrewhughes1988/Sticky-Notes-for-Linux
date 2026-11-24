@@ -137,6 +137,7 @@ export const RichEditor: React.FC<RichEditorProps> = ({
 }) => {
   const composing = useRef(false);
   const [saveError, setSaveError] = useState('');
+  const [linkError, setLinkError] = useState(false);
   const autosaveTimer = useRef(new AutosaveTimer());
   const autosave = useRef(new Autosave());
   const onChangeRef = useRef(onChange);
@@ -201,9 +202,10 @@ export const RichEditor: React.FC<RichEditorProps> = ({
         const anchor = target?.closest<HTMLAnchorElement>('a[href]');
         if (anchor?.href) {
           event.preventDefault();
-          void window.stickyNotesAPI.openExternalLink(anchor.href).catch(() => {
-            // Invalid or blocked URL
-          });
+          void window.stickyNotesAPI.openExternalLink(anchor.href).then(
+            () => setLinkError(false),
+            () => setLinkError(true)
+          );
           return true;
         }
         return false;
@@ -352,6 +354,14 @@ export const RichEditor: React.FC<RichEditorProps> = ({
   return (
     <div className="note-editor-wrapper app-no-drag">
       <EditorContent editor={editor} className="note-editor-tiptap" />
+      {linkError && (
+        <div role="alert" className="editor-error-banner app-no-drag">
+          <span>Could not open this link.</span>
+          <button type="button" className="inline-retry-btn" onClick={() => setLinkError(false)}>
+            Dismiss
+          </button>
+        </div>
+      )}
       {saveError && (
         <div role="alert" className="editor-error-banner app-no-drag">
           <span>{saveError}</span>
