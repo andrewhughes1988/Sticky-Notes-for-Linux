@@ -632,12 +632,7 @@ export const ManagerView: React.FC = () => {
               <article
                 key={note.id}
                 className={`note-card note-card-trash ${theme.isDark ? 'dark' : ''}`}
-                style={{
-                  backgroundColor: theme.body,
-                  color: theme.text,
-                  borderColor: theme.border,
-                  borderTopColor: theme.header,
-                }}
+                data-color={theme.id}
               >
                 <div className="note-card-trash-body">
                   <div className="note-card-header">

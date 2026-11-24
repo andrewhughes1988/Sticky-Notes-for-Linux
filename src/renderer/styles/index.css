@@ -167,6 +167,127 @@ html, body, #root {
   background: rgba(255, 255, 255, 0.12);
 }
 
+/* Note Color Themes (kept in sync with NOTE_COLORS in src/shared/types.ts) */
+:where(.note-container, .note-card) {
+  --theme-header: #FFF176;
+  --theme-header-text: #202020;
+  --theme-header-border: #E6D05E;
+  --header-btn-hover: rgba(0, 0, 0, 0.08);
+  --header-btn-active: rgba(0, 0, 0, 0.16);
+  --theme-border: #E6D05E;
+  --theme-body: #FFF7D1;
+  --theme-text: #202020;
+  --theme-placeholder: #6B6323;
+  --theme-toolbar-bg: transparent;
+  --theme-btn-hover: rgba(0, 0, 0, 0.08);
+  --theme-btn-active: rgba(0, 0, 0, 0.16);
+}
+
+:where(.note-container, .note-card)[data-color="yellow"] {
+  --theme-header: #FFF176;
+  --theme-header-text: #202020;
+  --theme-header-border: #E6D05E;
+  --header-btn-hover: rgba(0, 0, 0, 0.08);
+  --header-btn-active: rgba(0, 0, 0, 0.16);
+  --theme-border: #E6D05E;
+  --theme-body: #FFF7D1;
+  --theme-text: #202020;
+  --theme-placeholder: #6B6323;
+  --theme-toolbar-bg: transparent;
+  --theme-btn-hover: rgba(0, 0, 0, 0.08);
+  --theme-btn-active: rgba(0, 0, 0, 0.16);
+}
+
+:where(.note-container, .note-card)[data-color="green"] {
+  --theme-header: #B8F2A6;
+  --theme-header-text: #202020;
+  --theme-header-border: #99E284;
+  --header-btn-hover: rgba(0, 0, 0, 0.08);
+  --header-btn-active: rgba(0, 0, 0, 0.16);
+  --theme-border: #99E284;
+  --theme-body: #E4F9E0;
+  --theme-text: #202020;
+  --theme-placeholder: #3B6632;
+  --theme-toolbar-bg: transparent;
+  --theme-btn-hover: rgba(0, 0, 0, 0.08);
+  --theme-btn-active: rgba(0, 0, 0, 0.16);
+}
+
+:where(.note-container, .note-card)[data-color="pink"] {
+  --theme-header: #FFB7D5;
+  --theme-header-text: #202020;
+  --theme-header-border: #F094BC;
+  --header-btn-hover: rgba(0, 0, 0, 0.08);
+  --header-btn-active: rgba(0, 0, 0, 0.16);
+  --theme-border: #F094BC;
+  --theme-body: #FFD6E8;
+  --theme-text: #202020;
+  --theme-placeholder: #7A3154;
+  --theme-toolbar-bg: transparent;
+  --theme-btn-hover: rgba(0, 0, 0, 0.08);
+  --theme-btn-active: rgba(0, 0, 0, 0.16);
+}
+
+:where(.note-container, .note-card)[data-color="purple"] {
+  --theme-header: #D8B4E2;
+  --theme-header-text: #202020;
+  --theme-header-border: #BF90CC;
+  --header-btn-hover: rgba(0, 0, 0, 0.08);
+  --header-btn-active: rgba(0, 0, 0, 0.16);
+  --theme-border: #BF90CC;
+  --theme-body: #ECD7FC;
+  --theme-text: #202020;
+  --theme-placeholder: #5F2E70;
+  --theme-toolbar-bg: transparent;
+  --theme-btn-hover: rgba(0, 0, 0, 0.08);
+  --theme-btn-active: rgba(0, 0, 0, 0.16);
+}
+
+:where(.note-container, .note-card)[data-color="blue"] {
+  --theme-header: #99E0FC;
+  --theme-header-text: #202020;
+  --theme-header-border: #72C5E8;
+  --header-btn-hover: rgba(0, 0, 0, 0.08);
+  --header-btn-active: rgba(0, 0, 0, 0.16);
+  --theme-border: #72C5E8;
+  --theme-body: #D1F0FD;
+  --theme-text: #202020;
+  --theme-placeholder: #1F6080;
+  --theme-toolbar-bg: transparent;
+  --theme-btn-hover: rgba(0, 0, 0, 0.08);
+  --theme-btn-active: rgba(0, 0, 0, 0.16);
+}
+
+:where(.note-container, .note-card)[data-color="charcoal"] {
+  --theme-header: #303030;
+  --theme-header-text: #F4F4F5;
+  --theme-header-border: #444444;
+  --header-btn-hover: rgba(255, 255, 255, 0.14);
+  --header-btn-active: rgba(255, 255, 255, 0.24);
+  --theme-border: #444444;
+  --theme-body: #222222;
+  --theme-text: #F4F4F5;
+  --theme-placeholder: #9E9EA8;
+  --theme-toolbar-bg: transparent;
+  --theme-btn-hover: rgba(255, 255, 255, 0.12);
+  --theme-btn-active: rgba(255, 255, 255, 0.22);
+}
+
+:where(.note-container, .note-card)[data-color="white"] {
+  --theme-header: #EAEAEA;
+  --theme-header-text: #202020;
+  --theme-header-border: #D0D0D0;
+  --header-btn-hover: rgba(0, 0, 0, 0.08);
+  --header-btn-active: rgba(0, 0, 0, 0.16);
+  --theme-border: #D0D0D0;
+  --theme-body: #FAFAFA;
+  --theme-text: #202020;
+  --theme-placeholder: #666666;
+  --theme-toolbar-bg: transparent;
+  --theme-btn-hover: rgba(0, 0, 0, 0.08);
+  --theme-btn-active: rgba(0, 0, 0, 0.16);
+}
+
 /* Sticky Note Container */
 .note-container {
   display: flex;
@@ -174,9 +295,16 @@ html, body, #root {
   width: 100%;
   height: 100%;
   overflow: hidden;
+  background-color: var(--theme-body);
+  color: var(--theme-text);
   border: 1.5px solid var(--theme-border, rgba(0, 0, 0, 0.15));
   font-family: var(--font-family);
   transition: background-color 0.2s ease, border-color 0.2s ease;
+}
+
+.note-header-wrapper {
+  background-color: var(--theme-header);
+  color: var(--theme-header-text);
 }
 
 /* Sticky Note Header */
@@ -229,6 +357,26 @@ html, body, #root {
 
 .header-btn.active {
   background-color: var(--header-btn-active, var(--theme-btn-active));
+}
+
+.pin-btn {
+  opacity: 0.7;
+}
+
+.pin-btn.active {
+  opacity: 1;
+}
+
+.sticky-note-icon {
+  display: inline-block;
+  vertical-align: middle;
+  flex-shrink: 0;
+}
+
+.pin-icon {
+  display: inline-block;
+  vertical-align: middle;
+  transform: rotate(35deg);
 }
 
 .note-header .header-btn.close-btn:hover,
@@ -309,6 +457,14 @@ html, body, #root {
   box-shadow: 0 0 0 1px #FFFFFF inset;
 }
 
+.color-swatch[data-color="yellow"] { background-color: #FFDE59; }
+.color-swatch[data-color="green"] { background-color: #81C784; }
+.color-swatch[data-color="pink"] { background-color: #F06292; }
+.color-swatch[data-color="purple"] { background-color: #BA68C8; }
+.color-swatch[data-color="blue"] { background-color: #4FC3F7; }
+.color-swatch[data-color="charcoal"] { background-color: #607D8B; }
+.color-swatch[data-color="white"] { background-color: #E0E0E0; }
+
 .color-menu-item {
   display: flex;
   align-items: center;
@@ -349,6 +505,49 @@ html, body, #root {
 
 .dark .color-menu-divider {
   background: rgba(255, 255, 255, 0.1);
+}
+
+/* Tiptap / ProseMirror Base Styles (ported from @tiptap/core with injectCSS: false) */
+.ProseMirror {
+  position: relative;
+  word-wrap: break-word;
+  white-space: pre-wrap;
+  white-space: break-spaces;
+  -webkit-font-variant-ligatures: none;
+  font-variant-ligatures: none;
+  font-feature-settings: "liga" 0;
+}
+
+.ProseMirror [contenteditable="false"] {
+  white-space: normal;
+}
+
+.ProseMirror [contenteditable="false"] [contenteditable="true"] {
+  white-space: pre-wrap;
+}
+
+.ProseMirror pre {
+  white-space: pre-wrap;
+}
+
+img.ProseMirror-separator {
+  display: inline !important;
+  border: none !important;
+  margin: 0 !important;
+  width: 0 !important;
+  height: 0 !important;
+}
+
+.ProseMirror-hideselection *::selection {
+  background: transparent;
+}
+
+.ProseMirror-hideselection *::-moz-selection {
+  background: transparent;
+}
+
+.ProseMirror-hideselection * {
+  caret-color: transparent;
 }
 
 /* Rich Editor Area (Tiptap / ProseMirror) */
@@ -921,8 +1120,11 @@ html, body, #root {
   position: relative;
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
   box-shadow: var(--shadow-card);
-  border: 1.5px solid rgba(0, 0, 0, 0.06);
+  background-color: var(--theme-body);
+  color: var(--theme-text);
+  border: 1.5px solid var(--theme-border, rgba(0, 0, 0, 0.06));
   border-top-width: 5px;
+  border-top-color: var(--theme-header);
 }
 
 .note-card:hover {

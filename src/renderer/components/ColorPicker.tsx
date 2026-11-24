@@ -74,7 +74,7 @@ const ColorPickerComponent: React.FC<ColorPickerProps> = ({
                 key={colorKey}
                 type="button"
                 className={`color-swatch ${isSelected ? 'active' : ''} ${colorKey === 'white' ? 'color-swatch-light' : ''}`}
-                style={{ backgroundColor: def.dotColor }}
+                data-color={colorKey}
                 aria-label={def.name}
                 aria-pressed={isSelected}
                 title={def.name}
