@@ -256,6 +256,11 @@ export function registerIpcHandlers(
   });
 
   // Settings (Manager-only)
+  ipcMain.handle('settings:getSpellcheck', (event) => {
+    windowManager.rendererRole(event);
+    return db.getAllSettings().spellcheck;
+  });
+
   ipcMain.handle('settings:getAll', (event) => {
     requireManager(event);
     return { ...db.getAllSettings(), autostart: autostartManager.isEnabled() };
@@ -267,6 +272,11 @@ export function registerIpcHandlers(
       const theme = readTheme(value);
       db.setSetting('theme', theme);
       windowManager.broadcast('settings:changed', 'theme', theme);
+      return;
+    }
+    if (key === 'spellcheck' && typeof value === 'boolean') {
+      db.setSetting('spellcheck', value);
+      windowManager.broadcast('settings:changed', 'spellcheck', value);
       return;
     }
     if (key === 'autostart' && typeof value === 'boolean') {

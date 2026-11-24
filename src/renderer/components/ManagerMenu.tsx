@@ -1,9 +1,12 @@
 import React, { useLayoutEffect, useRef } from 'react';
 import { Download, FileText, Lock, Moon, Sun, Trash2, Power, ShieldAlert } from 'lucide-react';
 import { EncryptionStatus } from '../../shared/types';
+import { strings } from '../strings';
 
 interface ManagerMenuProps {
   isDarkMode: boolean;
+  spellcheck: boolean;
+  onToggleSpellcheck: () => void;
   isTrashView: boolean;
   autostart: boolean | null;
   isUpdatingAutostart: boolean;
@@ -25,6 +28,8 @@ interface ManagerMenuProps {
 
 const ManagerMenuComponent: React.FC<ManagerMenuProps> = ({
   isDarkMode,
+  spellcheck,
+  onToggleSpellcheck,
   isTrashView,
   autostart,
   isUpdatingAutostart,
@@ -101,6 +106,17 @@ const ManagerMenuComponent: React.FC<ManagerMenuProps> = ({
             <span>Dark mode</span>
           </span>
           <span className={`menu-switch-pill ${isDarkMode ? 'on' : ''}`} aria-hidden="true" />
+        </button>
+
+        <button
+          type="button"
+          className="manager-menu-item manager-menu-toggle-item"
+          role="switch"
+          aria-checked={spellcheck}
+          onClick={onToggleSpellcheck}
+        >
+          <span className="manager-menu-item-left"><span>{strings.settings.spellcheck}</span></span>
+          <span className={`menu-switch-pill ${spellcheck ? 'on' : ''}`} aria-hidden="true" />
         </button>
 
         <button

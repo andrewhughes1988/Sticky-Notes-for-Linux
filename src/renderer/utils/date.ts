@@ -1,45 +1,27 @@
-const timeFormatter = new Intl.DateTimeFormat(undefined, {
-  hour: 'numeric',
-  minute: '2-digit',
-});
-
-const monthDayFormatter = new Intl.DateTimeFormat(undefined, {
-  month: 'short',
-  day: 'numeric',
-});
-
-const fullDateFormatter = new Intl.DateTimeFormat(undefined, {
-  year: 'numeric',
-  month: 'short',
-  day: 'numeric',
-});
-
-export function formatFriendlyDate(timestamp: number, nowDate: Date = new Date()): string {
+export function formatFriendlyDate(
+  timestamp: number,
+  nowDate: Date = new Date(),
+  locale?: string
+): string {
   const date = new Date(timestamp);
-
-  const isToday =
-    date.getDate() === nowDate.getDate() &&
-    date.getMonth() === nowDate.getMonth() &&
-    date.getFullYear() === nowDate.getFullYear();
-
-  const yesterday = new Date(nowDate);
-  yesterday.setDate(nowDate.getDate() - 1);
-  const isYesterday =
-    date.getDate() === yesterday.getDate() &&
-    date.getMonth() === yesterday.getMonth() &&
-    date.getFullYear() === yesterday.getFullYear();
-
-  const timeStr = timeFormatter.format(date);
-
-  if (isToday) {
-    return `Today at ${timeStr}`;
+  const localDay = (value: Date) =>
+    Date.UTC(value.getFullYear(), value.getMonth(), value.getDate());
+  const dayDifference = Math.round((localDay(date) - localDay(nowDate)) / 86_400_000);
+  if (dayDifference === 0 || dayDifference === -1) {
+    const day = new Intl.RelativeTimeFormat(locale, { numeric: 'auto' }).format(
+      dayDifference,
+      'day'
+    );
+    const time = new Intl.DateTimeFormat(locale, { hour: 'numeric', minute: '2-digit' }).format(
+      date
+    );
+    return `${day}, ${time}`;
   }
-  if (isYesterday) {
-    return `Yesterday at ${timeStr}`;
-  }
-  if (date.getFullYear() === nowDate.getFullYear()) {
-    const monthStr = monthDayFormatter.format(date);
-    return `${monthStr} at ${timeStr}`;
-  }
-  return fullDateFormatter.format(date);
+  return new Intl.DateTimeFormat(locale, {
+    ...(date.getFullYear() !== nowDate.getFullYear() ? { year: 'numeric' } : {}),
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  }).format(date);
 }

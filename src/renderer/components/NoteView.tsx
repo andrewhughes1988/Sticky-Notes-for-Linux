@@ -5,6 +5,7 @@ import { ColorPicker } from './ColorPicker';
 import { RichEditor, RichEditorHandle } from './RichEditor';
 import { ActiveFormatFlags, EditorToolbar } from './EditorToolbar';
 import { DeleteModal } from './DeleteModal';
+import { strings } from '../strings';
 
 interface NoteViewProps {
   noteId: string;
@@ -13,6 +14,24 @@ interface NoteViewProps {
 export const NoteView: React.FC<NoteViewProps> = ({ noteId }) => {
   const [note, setNote] = useState<Note | null>(null);
   const [error, setError] = useState('');
+  const [spellcheck, setSpellcheck] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    let changed = false;
+    const unsubscribe = window.stickyNotesAPI.onSettingsChanged((key, value) => {
+      if (key === 'spellcheck' && typeof value === 'boolean') {
+        changed = true;
+        setSpellcheck(value);
+      }
+    });
+    void window.stickyNotesAPI.getSpellcheck().then((value) => {
+      if (active && !changed) setSpellcheck(value);
+    }).catch(() => {
+      if (active && !changed) setError(strings.settings.spellcheckLoadError);
+    });
+    return () => { active = false; unsubscribe(); };
+  }, []);
   const [loadAttempt, setLoadAttempt] = useState(0);
   const [isDeleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState('');
@@ -218,6 +237,7 @@ export const NoteView: React.FC<NoteViewProps> = ({ noteId }) => {
       {/* Rich Editor */}
       {note && (
         <RichEditor
+          spellcheck={spellcheck}
           key={note.id}
           initialHtml={note.content_html}
           placeholder="Take a note..."

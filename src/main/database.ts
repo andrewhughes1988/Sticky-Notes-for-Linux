@@ -33,6 +33,7 @@ const PREVIEW_COLUMNS = 'notes.id, notes.color, notes.updated_at, notes.is_open,
 const DEFAULT_SETTINGS: AppConfig = {
   theme: 'system',
   autostart: true,
+  spellcheck: false,
 };
 const VALID_THEMES = new Set<AppTheme>(['system', 'light', 'dark']);
 const ASCII_ONLY = /^[\x20-\x7E]+$/;
@@ -966,6 +967,8 @@ export class DatabaseService {
           result.theme = parsed as AppTheme;
         } else if (row.key === 'autostart' && typeof parsed === 'boolean') {
           result.autostart = parsed;
+        } else if (row.key === 'spellcheck' && typeof parsed === 'boolean') {
+          result.spellcheck = parsed;
         }
       } catch {
         // Ignore corrupt setting; keep default

@@ -276,7 +276,7 @@ export class WindowManager {
         nodeIntegration: false,
         sandbox: true,
         webSecurity: true,
-        spellcheck: false,
+        spellcheck: true,
         additionalArguments: [`--note-id=${note.id}`, '--window-type=note'],
       },
     });

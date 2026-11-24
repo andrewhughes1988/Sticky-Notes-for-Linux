@@ -202,6 +202,7 @@ export const NOTE_COLORS: Record<NoteColor, ColorThemeDef> = {
 export interface AppConfig {
   theme: AppTheme;
   autostart: boolean;
+  spellcheck: boolean;
 }
 
 export type SettingChangeListener = (
@@ -249,6 +250,7 @@ export interface StickyNotesAPI {
   onFlushCancelled: (callback: () => void) => () => void;
 
   // Settings
+  getSpellcheck: () => Promise<boolean>;
   getConfig: () => Promise<AppConfig>;
   setConfig: <K extends keyof AppConfig>(key: K, value: AppConfig[K]) => Promise<void>;
 

@@ -83,6 +83,7 @@ const api: StickyNotesAPI = {
     };
   },
 
+  getSpellcheck: () => ipcRenderer.invoke('settings:getSpellcheck'),
   getConfig: () => ipcRenderer.invoke('settings:getAll'),
   setConfig: (key, value) => ipcRenderer.invoke('settings:set', key, value),
 };
