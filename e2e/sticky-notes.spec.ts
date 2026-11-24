@@ -277,3 +277,52 @@ test('full lifecycle: create, edit with Tiptap, search, Trash/restore, tray pers
     fs.rmSync(envDirs.root, { recursive: true, force: true });
   }
 });
+
+test('encryption setting encrypts saved notes and restores plaintext when disabled', async () => {
+  const envDirs = createTempEnv();
+  let app: ElectronApplication | undefined;
+  const noteText = 'Encrypted E2E sentinel 9c5d7f42';
+
+  try {
+    app = await launchApp(envDirs);
+    const noteWindow = await app.firstWindow();
+    const editor = noteWindow.getByRole('textbox', { name: 'Note text' });
+    await editor.fill(noteText);
+    await expect.poll(() => noteWindow.evaluate(async () => {
+      const api = window.stickyNotesAPI;
+      return (await api.getNote(api.noteId!))?.content_plain;
+    })).toContain(noteText);
+
+    await app.evaluate(({ safeStorage }) => {
+      safeStorage.isEncryptionAvailable = () => true;
+      safeStorage.getSelectedStorageBackend = () => 'gnome_libsecret';
+      safeStorage.encryptString = (value: string) => Buffer.from(value, 'utf8');
+      safeStorage.decryptString = (value: Buffer) => value.toString('utf8');
+    });
+
+    const managerPromise = app.waitForEvent('window');
+    await noteWindow.getByRole('button', { name: 'Note options' }).click();
+    await noteWindow.getByRole('button', { name: 'Notes list' }).click();
+    const manager = await managerPromise;
+    await manager.getByRole('button', { name: 'Settings and actions' }).click();
+    const encryption = manager.getByRole('switch', { name: 'Encrypt at rest' });
+    await expect(encryption).toBeEnabled();
+    await expect(encryption).toHaveAttribute('aria-checked', 'false');
+    await encryption.click();
+    await expect(encryption).toHaveAttribute('aria-checked', 'true');
+    await expect(manager.getByText('Notes are now encrypted at rest.')).toBeVisible();
+    await expect(editor).toContainText(noteText);
+
+    const databaseFile = path.join(envDirs.dataHome, 'sticky-notes', 'stickynotes.db');
+    expect(fs.readFileSync(databaseFile).includes(Buffer.from(noteText))).toBe(false);
+
+    await encryption.click();
+    await expect(encryption).toHaveAttribute('aria-checked', 'false');
+    await expect(manager.getByText('Note encryption disabled.')).toBeVisible();
+    await expect(editor).toContainText(noteText);
+    expect(fs.readFileSync(databaseFile).includes(Buffer.from(noteText))).toBe(true);
+  } finally {
+    if (app) await app.close().catch(() => {});
+    fs.rmSync(envDirs.root, { recursive: true, force: true });
+  }
+});
