@@ -34,6 +34,9 @@ jobs:
       - name: Build application
         run: npm run build
 
+      - name: Verify Linux packaging
+        run: npm run pack
+
       - name: Run Electron E2E tests
         run: xvfb-run --auto-servernum npx playwright test
 
