@@ -118,13 +118,29 @@ test('full lifecycle: create, edit with Tiptap, search, Trash/restore, tray pers
       noteWindow.locator('ul[data-type="taskList"] input[type="checkbox"]')
     ).toBeVisible();
 
+    await editor.press('End');
+    await editor.press('Enter');
+    await noteWindow.keyboard.type('Another checklist item');
+    const checkboxes = noteWindow.getByRole('checkbox', { name: 'Toggle checklist item' });
+    await expect(checkboxes).toHaveCount(2);
+    await editor.press('Control+a');
+    await checkboxes.first().click();
+    await expect(checkboxes.first()).toBeChecked();
+    await expect(checkboxes.nth(1)).toBeChecked();
+    await editor.press('Control+a');
+    await checkboxes.first().click();
+    await expect(checkboxes.first()).not.toBeChecked();
+    await expect(checkboxes.nth(1)).not.toBeChecked();
+
     // 2b. Open color picker and switch note color
     await noteWindow.getByRole('button', { name: 'Note options' }).click();
     await noteWindow.getByRole('button', { name: 'Blue' }).click();
     await expect(noteWindow.locator('.note-container')).toHaveAttribute('data-color', 'blue');
 
-    // Wait for autosave idle window (300ms + margin)
-    await noteWindow.waitForTimeout(500);
+    await expect.poll(() => noteWindow.evaluate(async () => {
+      const api = window.stickyNotesAPI;
+      return (await api.getNote(api.noteId!))?.content_plain;
+    })).toContain('Playwright E2E Checklist Item');
 
     // 3. Create a second note via Ctrl+N keyboard shortcut
     const secondWindowPromise = app.waitForEvent('window');
@@ -136,7 +152,22 @@ test('full lifecycle: create, edit with Tiptap, search, Trash/restore, tray pers
     await expect(secondEditor).toBeVisible();
     await secondEditor.click();
     await secondWindow.keyboard.type('Second Note To Trash');
-    await secondWindow.waitForTimeout(500);
+
+    await expect.poll(() => secondWindow.evaluate(async () => {
+      const api = window.stickyNotesAPI;
+      return (await api.getNote(api.noteId!))?.content_plain;
+    })).toContain('Second Note To Trash');
+
+    const thirdWindowPromise = app.waitForEvent('window');
+    await secondWindow.keyboard.press('Control+n');
+    const thirdWindow = await thirdWindowPromise;
+    const thirdEditor = thirdWindow.getByRole('textbox', { name: 'Note text' });
+    await expect(thirdEditor).toBeVisible();
+    await thirdEditor.fill('Permanently Remove Me');
+    await expect.poll(() => thirdWindow.evaluate(async () => {
+      const api = window.stickyNotesAPI;
+      return (await api.getNote(api.noteId!))?.content_plain;
+    })).toContain('Permanently Remove Me');
 
     // 4. Open Notes Manager from Note Options menu
     const managerPromise = app.waitForEvent('window');
@@ -154,11 +185,36 @@ test('full lifecycle: create, edit with Tiptap, search, Trash/restore, tray pers
       managerWindow.getByRole('button', { name: /Open note: Playwright E2E Checklist Item/ })
     ).toBeVisible();
 
+    const exportPath = path.join(envDirs.root, 'notes-export');
+    await app.evaluate(({ dialog }, basePath) => {
+      let calls = 0;
+      dialog.showSaveDialog = (async () => ({
+        canceled: false,
+        filePath: `${basePath}.${calls++ === 0 ? 'json' : 'md'}`,
+      })) as typeof dialog.showSaveDialog;
+    }, exportPath);
+    for (const [label, extension] of [['Export as JSON', 'json'], ['Export as Markdown', 'md']]) {
+      await managerWindow.getByRole('button', { name: 'Settings and actions' }).click();
+      await managerWindow.getByRole('button', { name: label }).click();
+      await expect.poll(() => fs.existsSync(`${exportPath}.${extension}`)).toBe(true);
+      expect(fs.readFileSync(`${exportPath}.${extension}`, 'utf8')).toContain('Playwright E2E Checklist Item');
+    }
+
     // Clear search with Escape
     await searchInput.press('Escape');
     await expect(searchInput).toHaveValue('');
 
+    await managerWindow.getByRole('button', { name: /Move note to Trash: Permanently Remove Me/ }).click();
+    await managerWindow.getByRole('button', { name: 'Move to Trash' }).click();
+    await managerWindow.getByRole('button', { name: 'Settings and actions' }).click();
+    await managerWindow.getByRole('button', { name: 'Open Trash' }).click();
+    await managerWindow.getByRole('button', { name: 'Delete forever' }).click();
+    await managerWindow.getByRole('alertdialog').getByRole('button', { name: 'Delete permanently' }).click();
+    await expect(managerWindow.getByText('Permanently Remove Me')).toHaveCount(0);
+    await managerWindow.getByRole('button', { name: 'Back', exact: true }).click();
+
     // 6. Soft-delete the second note to Trash, then open unified Settings & actions menu -> Open Trash -> Restore
+    await expect(managerWindow.getByRole('button', { name: /Open note: Second Note To Trash/ })).toBeVisible();
     await managerWindow
       .getByRole('button', { name: /Move note to Trash: Second Note To Trash/ })
       .click();
@@ -172,8 +228,6 @@ test('full lifecycle: create, edit with Tiptap, search, Trash/restore, tray pers
     await expect(darkModeSwitch).toBeVisible();
     await darkModeSwitch.click();
     await expect(managerWindow.locator('.manager-container')).toHaveClass(/dark/);
-    await darkModeSwitch.click();
-    await expect(managerWindow.locator('.manager-container')).not.toHaveClass(/dark/);
     await expect(managerWindow.getByRole('switch', { name: 'Start at login' })).toBeVisible();
     await expect(managerWindow.getByRole('button', { name: 'Export as JSON' })).toBeVisible();
     await expect(managerWindow.getByRole('button', { name: 'Export as Markdown' })).toBeVisible();
@@ -184,6 +238,16 @@ test('full lifecycle: create, edit with Tiptap, search, Trash/restore, tray pers
     await expect(
       managerWindow.getByRole('button', { name: /Open note: Second Note To Trash/ })
     ).toBeVisible();
+
+    await managerWindow
+      .getByRole('button', { name: /Move note to Trash: Second Note To Trash/ })
+      .click();
+    await managerWindow.getByRole('button', { name: 'Move to Trash' }).click();
+    await managerWindow.getByRole('button', { name: 'Settings and actions' }).click();
+    await managerWindow.getByRole('button', { name: 'Open Trash' }).click();
+    await managerWindow.getByRole('button', { name: 'Empty Trash' }).click();
+    await managerWindow.getByRole('alertdialog').getByRole('button', { name: 'Empty Trash' }).click();
+    await expect(managerWindow.getByText('Second Note To Trash')).toHaveCount(0);
 
     await assertNoCspViolations(noteWindow, 'noteWindow');
     await assertNoCspViolations(managerWindow, 'managerWindow');
@@ -198,6 +262,12 @@ test('full lifecycle: create, edit with Tiptap, search, Trash/restore, tray pers
     await expect(restoredWindow.getByRole('textbox', { name: 'Note text' })).toContainText(
       'Playwright E2E Checklist Item'
     );
+    await expect(restoredWindow.locator('.note-container')).toHaveAttribute('data-color', 'blue');
+    const restoredManagerPromise = app.waitForEvent('window');
+    await restoredWindow.getByRole('button', { name: 'Note options' }).click();
+    await restoredWindow.getByRole('button', { name: 'Notes list' }).click();
+    const restoredManager = await restoredManagerPromise;
+    await expect(restoredManager.locator('.manager-container')).toHaveClass(/dark/);
     await assertNoCspViolations(restoredWindow, 'restoredWindow');
     expect(consoleErrors, 'Console errors during E2E run').toEqual([]);
   } finally {

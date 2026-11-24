@@ -14,6 +14,7 @@
     "rebuild": "electron-builder install-app-deps",
     "postinstall": "patch-package --error-on-fail && electron-builder install-app-deps",
     "test": "ELECTRON_RUN_AS_NODE=1 electron --import tsx --test tests/*.test.ts",
+    "test:coverage": "ELECTRON_RUN_AS_NODE=1 electron --import tsx --test --experimental-test-coverage tests/*.test.ts",
     "test:e2e": "npm run build && playwright test",
     "pack": "npm run build && electron-builder --dir",
     "dist": "npm run build && electron-builder"
