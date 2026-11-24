@@ -12,6 +12,8 @@ Sticky Notes for Linux follows Electron's strict multi-process security model:
 │  ├─ windowManager.ts BrowserWindow registry, flush, recovery    │
 │  ├─ ipcHandlers.ts   Role-scoped, schema-validated IPC handlers │
 │  ├─ htmlSanitizer.ts Main-process defense-in-depth sanitizer    │
+│  ├─ crypto.ts        AES-GCM note encryption and OS keyring     │
+│  ├─ linuxPlatform.ts Linux launch arguments and display checks  │
 │  ├─ tray.ts          Linux system tray menu                     │
 │  ├─ autostart.ts     XDG autostart .desktop manager             │
 │  └─ logger.ts        Bounded rotating error log                 │
@@ -48,9 +50,9 @@ Every renderer window is launched with `--window-type=note --note-id=<uuid>` or 
 
 ## Linux Display Backend & Taskbar Identity (`src/main/linuxPlatform.ts`)
 
-Starting in Electron 38+, Linux automatically selects native Wayland when `WAYLAND_DISPLAY` is set. Because the Wayland `xdg-shell` protocol does not allow client applications to set always-on-top (`setAlwaysOnTop`) or read/restore global desktop coordinates (`x`, `y`), Sticky Notes prefers the `x11` (XWayland) Ozone backend whenever `DISPLAY` is present—preserving pinning, exact desktop position restoration, and `moveTop()` on KDE Plasma and GNOME Wayland sessions—while falling back cleanly to native Wayland (`ozone-platform-hint=auto` + `WaylandWindowDecorations`) on pure-Wayland systems without XWayland (and preserving stored coordinates rather than overwriting them with `(0, 0)`). Users can override this at any time via `--ozone-platform=wayland`.
+In Electron 38 and later, Chromium initializes its Ozone display backend before `main.ts` runs. The app therefore supplies display flags at launch instead of changing them in the main process. The packaged `.deb` and AppImage launch entries currently pass `--ozone-platform=x11` and `--class=com.netsysprep.stickynotes`. The development `npm start` command also selects X11. Autostart adds `--ozone-platform=x11` when `DISPLAY` is set and always passes the window class. X11 and XWayland support always-on-top pinning and desktop coordinates. Native Wayland does not expose those capabilities, so the window manager preserves saved coordinates when Wayland reports `(0, 0)`. The packaged launcher currently forces X11, including on systems without XWayland.
 
-To ensure running windows associate with the pinned `.desktop` launcher instead of spawning a duplicate taskbar icon, `main.ts` explicitly sets `--class=com.netsysprep.stickynotes` and `app.setDesktopName('sticky-notes-linux.desktop')` (mirrored by `desktopName` in `package.json` and `StartupWMClass=com.netsysprep.stickynotes` in both the `.deb` and autostart desktop entries).
+To associate windows with the desktop launcher, `main.ts` calls `app.setDesktopName('sticky-notes-linux.desktop')`. The `.deb` and autostart entries set `StartupWMClass=com.netsysprep.stickynotes`, matching the launch argument. `package.json` sets the packaged desktop file name and executable arguments.
 
 ## Testing & Native ABI Notes
 

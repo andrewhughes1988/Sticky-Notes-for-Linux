@@ -12,7 +12,7 @@ A lightweight, offline-first, and distraction-free Sticky Notes app for Linux, i
 - **Pin Always-on-Top** — Keep important notes pinned above your other windows while you work.
 - **Notes Manager, Instant Search & Trash** — Search all notes instantly via SQLite FTS5, recover deleted notes from Trash, or export backups as JSON or Markdown.
 - **Automatic State Restoration** — Open notes, sizes, and positions are restored automatically on relaunch.
-- **Local Encryption at Rest (Optional)** — Protect note contents on disk with AES-256-GCM keyed via your desktop OS keyring (KWallet / GNOME Keyring) from the Notes Manager footer.
+- **Local Encryption at Rest (Optional)** — Protect note contents on disk with AES-256-GCM keyed via your desktop OS keyring (KWallet / GNOME Keyring) from the Notes Manager Settings menu.
 - **Persistent System Tray Integration** — Closing note windows keeps Sticky Notes resident in your system tray for quick access; quit explicitly via Tray → **Quit Sticky Notes** or `Ctrl+Q`.
 
 ---
@@ -84,7 +84,7 @@ AppImages built from this source require Chromium's sandbox. If the AppImage fai
 - **Database:** `${XDG_DATA_HOME:-$HOME/.local/share}/sticky-notes/stickynotes.db` (directory `0700`, file `0600`).
 - **Error Logs:** `${XDG_STATE_HOME:-$HOME/.local/state}/sticky-notes/logs/app.log` (bounded rotating logs; note contents are never logged).
 - **Recovery:** If the app reports a database error, close any running instance and verify the directory is writable with free disk space. Before attempting repairs, copy the entire `sticky-notes` directory (including any `-wal` and `-shm` files) to a safe location.
-- **Trash & Backups:** Deleting a note moves it to **Trash** in the Notes Manager where it can be restored or permanently purged. Before schema upgrades, Sticky Notes writes a verified recovery snapshot (`*.pre-v*.bak`) in the data directory; once verified, you can remove those backup files from the Notes Manager banner.
+- **Trash & Backups:** Deleting a note moves it to **Trash** in the Notes Manager where it can be restored or permanently purged. Before schema upgrades, Sticky Notes writes a verified recovery snapshot (`*.pre-v*.bak`) in the data directory; once verified, remove those backup files from the Notes Manager Settings menu.
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [SECURITY.md](SECURITY.md), and [CHANGELOG.md](CHANGELOG.md) for engineering details.
 
