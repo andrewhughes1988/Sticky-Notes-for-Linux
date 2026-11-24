@@ -14,6 +14,8 @@ import {
 } from '../shared/types';
 import { NoteCipher } from './crypto';
 
+type SearchRow = Pick<Note, 'id' | 'title' | 'content_plain' | 'color' | 'updated_at' | 'is_open' | 'is_pinned'>;
+
 interface ListOptions {
   search?: string;
   includeClosed?: boolean;
@@ -102,6 +104,9 @@ export class DatabaseService {
   private dbPath: string;
   private updateStmtCache = new Map<string, Database.Statement>();
   private cipher: NoteCipher | null = null;
+  private searchCache: Map<string, SearchRow> | null = null;
+  private stmtSearchRows!: Database.Statement;
+  private stmtSearchRow!: Database.Statement;
 
   constructor(customPath?: string) {
     if (customPath) {
@@ -201,6 +206,9 @@ export class DatabaseService {
   private stmtSetSetting!: Database.Statement;
 
   private initStatements(): void {
+    const searchColumns = 'id, title, content_plain, color, updated_at, is_open, is_pinned';
+    this.stmtSearchRows = this.db.prepare(`SELECT ${searchColumns} FROM notes WHERE deleted_at IS NULL`);
+    this.stmtSearchRow = this.db.prepare(`SELECT ${searchColumns} FROM notes WHERE id = ? AND deleted_at IS NULL`);
     this.stmtInsertNote = this.db.prepare(`
       INSERT INTO notes (
         id, title, content_html, content_plain, color, is_open, is_pinned,
@@ -462,6 +470,7 @@ export class DatabaseService {
       throw new Error('Invalid encryption key.');
     }
     this.cipher = cipher;
+    this.searchCache = null;
   }
 
   public enableEncryption(cipher: NoteCipher, wrappedKey: string): void {
@@ -503,6 +512,8 @@ export class DatabaseService {
         this.cipher = cipher;
       })
       .immediate();
+
+    this.searchCache = null;
 
     // Purge old plaintext SQLite pages from disk
     this.db.exec('VACUUM');
@@ -549,6 +560,7 @@ export class DatabaseService {
       })
       .immediate();
 
+    this.searchCache = null;
     try {
       this.db.pragma('wal_checkpoint(TRUNCATE)');
     } catch {
@@ -574,6 +586,47 @@ export class DatabaseService {
 
   private encryptField(id: string, field: 'title' | 'content_html' | 'content_plain', value: string): string {
     return this.cipher ? this.cipher.encrypt(value, `${id}:${field}`) : value;
+  }
+
+  private decodeSearchRow(row: SearchRow): SearchRow {
+    const cipher = this.cipher!;
+    return {
+      ...row,
+      title: cipher.decrypt(row.title, `${row.id}:title`),
+      content_plain: cipher.decrypt(row.content_plain, `${row.id}:content_plain`),
+    };
+  }
+
+  private refreshSearchRow(id: string): void {
+    if (!this.searchCache) return;
+    if (this.db.inTransaction) {
+      this.searchCache = null;
+      return;
+    }
+    const row = this.stmtSearchRow.get(id) as SearchRow | undefined;
+    if (row) this.searchCache.set(id, this.decodeSearchRow(row));
+    else this.searchCache.delete(id);
+  }
+
+  private encryptedSearchRows(options: ListOptions): SearchRow[] {
+    if (!this.searchCache) {
+      this.searchCache = new Map(
+        (this.stmtSearchRows.all() as SearchRow[]).map((row) => {
+          const decoded = this.decodeSearchRow(row);
+          return [decoded.id, decoded];
+        })
+      );
+    }
+    const query = createSearchQuery(options.search);
+    if (query.punctuationOnly) return [];
+    const terms = [...query.indexedTerms, ...query.shortTerms].map((term) => term.toLowerCase());
+    return [...this.searchCache.values()]
+      .filter((row) => {
+        if (options.includeClosed === false && !row.is_open) return false;
+        const hay = `${row.title}\n${row.content_plain}`.toLowerCase();
+        return terms.every((term) => hay.includes(term));
+      })
+      .sort((a, b) => b.updated_at - a.updated_at || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   }
 
   // --- Note Operations ---
@@ -617,6 +670,7 @@ export class DatabaseService {
       : note;
 
     this.stmtInsertNote.run(storedNote);
+    this.refreshSearchRow(id);
     return note;
   }
 
@@ -642,27 +696,11 @@ export class DatabaseService {
   public getAllNotes(options: ListOptions = {}): Note[] {
     this.requireUnlocked();
     if (this.cipher) {
-      const all = (
-        this.db
-          .prepare(
-            `SELECT * FROM notes WHERE deleted_at IS NULL${
-              options.includeClosed === false ? ' AND is_open = 1' : ''
-            } ORDER BY updated_at DESC, id ASC`
-          )
-          .all() as Note[]
-      ).map((n) => this.decryptNote(n));
-      const query = createSearchQuery(options.search);
-      if (query.punctuationOnly) return [];
-      const terms = [...query.indexedTerms, ...query.shortTerms].map((t) => t.toLowerCase());
-      const filtered = terms.length
-        ? all.filter((n) => {
-            const hay = `${n.title}\n${n.content_plain}`.toLowerCase();
-            return terms.every((term) => hay.includes(term));
-          })
-        : all;
+      const rows = this.encryptedSearchRows(options);
       const offset = Number.isSafeInteger(options.offset) && options.offset! > 0 ? options.offset! : 0;
       const limit = Number.isSafeInteger(options.limit) && options.limit! > 0 ? options.limit! : undefined;
-      return limit !== undefined ? filtered.slice(offset, offset + limit) : filtered.slice(offset);
+      const page = limit !== undefined ? rows.slice(offset, offset + limit) : rows.slice(offset);
+      return page.map((row) => this.getNoteById(row.id)!);
     }
     return this.listNotes('notes.*', options) as Note[];
   }
@@ -677,47 +715,15 @@ export class DatabaseService {
     const query = createSearchQuery(options.search);
 
     if (this.cipher) {
-      if (query.punctuationOnly) return [];
-      const rows = this.db
-        .prepare(
-          `SELECT ${PREVIEW_COLUMNS}, notes.title, notes.content_plain FROM notes
-           WHERE notes.deleted_at IS NULL${options.includeClosed === false ? ' AND notes.is_open = 1' : ''}
-           ORDER BY notes.updated_at DESC, notes.id ASC`
-        )
-        .all() as (Omit<NotePreview, 'preview'> & Pick<Note, 'title' | 'content_plain'>)[];
-
-      const terms = [...query.indexedTerms, ...query.shortTerms].map((t) => t.toLowerCase());
-      const matched: NotePreview[] = [];
-      let skipped = 0;
-
-      for (const row of rows) {
-        const title = this.cipher.decrypt(row.title, `${row.id}:title`);
-        const contentPlain = this.cipher.decrypt(row.content_plain, `${row.id}:content_plain`);
-        if (terms.length > 0) {
-          const hay = `${title}\n${contentPlain}`.toLowerCase();
-          if (!terms.every((term) => hay.includes(term))) continue;
-        }
-        if (skipped < offset) {
-          skipped++;
-          continue;
-        }
-        const preview =
-          terms.length > 0
-            ? (excerptAroundMatch(contentPlain, terms) ??
-                excerptAroundMatch(title, terms) ??
-                (contentPlain || title).slice(0, 500))
-            : (contentPlain || title).slice(0, 500);
-        matched.push({
-          id: row.id,
-          color: row.color,
-          updated_at: row.updated_at,
-          is_open: row.is_open,
-          is_pinned: row.is_pinned,
-          preview,
-        });
-        if (matched.length >= limit) break;
-      }
-      return matched;
+      const terms = [...query.indexedTerms, ...query.shortTerms].map((term) => term.toLowerCase());
+      return this.encryptedSearchRows(options).slice(offset, offset + limit).map((row) => {
+        const preview = terms.length > 0
+          ? (excerptAroundMatch(row.content_plain, terms) ??
+              excerptAroundMatch(row.title, terms) ?? (row.content_plain || row.title).slice(0, 500))
+          : (row.content_plain || row.title).slice(0, 500);
+        const { title: _title, content_plain: _contentPlain, ...metadata } = row;
+        return { ...metadata, preview };
+      });
     }
 
     const boundedOptions = { ...options, limit };
@@ -865,6 +871,7 @@ export class DatabaseService {
       return null;
     }
 
+    this.refreshSearchRow(id);
     return this.getNoteById(id);
   }
 
@@ -874,16 +881,19 @@ export class DatabaseService {
 
   public setNoteOpenState(id: string, isOpen: boolean): void {
     this.stmtSetNoteOpenState.run({ open: isOpen ? 1 : 0, now: Date.now(), id });
+    this.refreshSearchRow(id);
   }
 
   public toggleNotePin(id: string): boolean {
     const result = this.stmtToggleNotePin.get(id) as Pick<Note, 'is_pinned'> | undefined;
+    this.refreshSearchRow(id);
     return result?.is_pinned === 1;
   }
 
   /** Soft-delete a note to Trash so it can be restored or permanently purged. */
   public deleteNote(id: string): void {
     this.stmtSoftDeleteNote.run({ now: Date.now(), id });
+    this.refreshSearchRow(id);
   }
 
   public getDeletedNotes(): DeletedNotePreview[] {
@@ -912,11 +922,13 @@ export class DatabaseService {
 
   public restoreNote(id: string): boolean {
     const info = this.stmtRestoreNote.run({ now: Date.now(), id });
+    this.refreshSearchRow(id);
     return info.changes > 0;
   }
 
   public permanentlyDeleteNote(id: string): void {
     this.stmtHardDeleteNote.run(id);
+    this.refreshSearchRow(id);
   }
 
   public emptyTrash(): void {
@@ -1015,6 +1027,9 @@ export class DatabaseService {
       // Ignore checkpoint errors on close
     }
     this.updateStmtCache.clear();
+    this.searchCache?.clear();
+    this.searchCache = null;
+    this.cipher = null;
     this.db.close();
   }
 }
