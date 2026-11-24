@@ -136,7 +136,10 @@ test('Search excerpts, Unicode folding, short-term search, and metadata isolatio
       searchDb.getNotePreviews({ search: 'shipment', offset: 2 })[0]?.preview,
       /International Shipment/
     );
-    assert.match(searchDb.getNotePreviews({ search: 'SH', limit: 1 })[0]?.preview, /Shipment leaves/);
+    assert.match(
+      searchDb.getNotePreviews({ search: 'SH', limit: 1 })[0]?.preview,
+      /Shipment leaves/
+    );
     assert.match(searchDb.getNotePreviews({ search: 'CAFÉ' })[0]?.preview, /café/);
     assert.match(searchDb.getNotePreviews({ search: 'i\u0307' })[0]?.preview, /İ/);
     assert.match(searchDb.getNotePreviews({ search: 'a οσκοσ' })[0]?.preview, /ΟΣΚΟΣ/);

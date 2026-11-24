@@ -174,7 +174,10 @@ export class DatabaseService {
         try {
           fs.unlinkSync(migrationBackup);
         } catch (cleanupError) {
-          console.error('Could not remove a redundant backup after a failed migration:', cleanupError);
+          console.error(
+            'Could not remove a redundant backup after a failed migration:',
+            cleanupError
+          );
         }
       }
       throw error;
@@ -481,7 +484,9 @@ export class DatabaseService {
           'UPDATE notes SET title = ?, content_html = ?, content_plain = ? WHERE id = ?'
         );
         for (const row of rows) {
-          const plainTitle = this.cipher ? this.cipher.decrypt(row.title, `${row.id}:title`) : row.title;
+          const plainTitle = this.cipher
+            ? this.cipher.decrypt(row.title, `${row.id}:title`)
+            : row.title;
           const plainHtml = this.cipher
             ? this.cipher.decrypt(row.content_html, `${row.id}:content_html`)
             : row.content_html;
@@ -544,7 +549,11 @@ export class DatabaseService {
         `);
 
         this.stmtSetSetting.run('encryption_enabled', JSON.stringify(false));
-        this.db.prepare("DELETE FROM settings WHERE key IN ('encryption_key_wrapped', 'encryption_canary')").run();
+        this.db
+          .prepare(
+            "DELETE FROM settings WHERE key IN ('encryption_key_wrapped', 'encryption_canary')"
+          )
+          .run();
         this.cipher = null;
       })
       .immediate();
@@ -572,7 +581,11 @@ export class DatabaseService {
     };
   }
 
-  private encryptField(id: string, field: 'title' | 'content_html' | 'content_plain', value: string): string {
+  private encryptField(
+    id: string,
+    field: 'title' | 'content_html' | 'content_plain',
+    value: string
+  ): string {
     return this.cipher ? this.cipher.encrypt(value, `${id}:${field}`) : value;
   }
 
@@ -660,8 +673,10 @@ export class DatabaseService {
             return terms.every((term) => hay.includes(term));
           })
         : all;
-      const offset = Number.isSafeInteger(options.offset) && options.offset! > 0 ? options.offset! : 0;
-      const limit = Number.isSafeInteger(options.limit) && options.limit! > 0 ? options.limit! : undefined;
+      const offset =
+        Number.isSafeInteger(options.offset) && options.offset! > 0 ? options.offset! : 0;
+      const limit =
+        Number.isSafeInteger(options.limit) && options.limit! > 0 ? options.limit! : undefined;
       return limit !== undefined ? filtered.slice(offset, offset + limit) : filtered.slice(offset);
     }
     return this.listNotes('notes.*', options) as Note[];
@@ -704,8 +719,8 @@ export class DatabaseService {
         const preview =
           terms.length > 0
             ? (excerptAroundMatch(contentPlain, terms) ??
-                excerptAroundMatch(title, terms) ??
-                (contentPlain || title).slice(0, 500))
+              excerptAroundMatch(title, terms) ??
+              (contentPlain || title).slice(0, 500))
             : (contentPlain || title).slice(0, 500);
         matched.push({
           id: row.id,
@@ -741,8 +756,7 @@ export class DatabaseService {
       // SQLite's Unicode folding can differ from JavaScript's. Ask FTS for context when it found a match we did not.
       if (!preview && query.indexedQuery) {
         const match = this.stmtGetIndexedExcerpt.get(note.id, query.indexedQuery) as
-          | { preview: string }
-          | undefined;
+          { preview: string } | undefined;
         preview = match?.preview.replace(/\s+/g, ' ').trim();
       }
       return { ...note, preview: preview ?? (content_plain || title).slice(0, 500) };
@@ -771,7 +785,9 @@ export class DatabaseService {
         );
         params.push(lowered, lowered);
       } else {
-        conditions.push('(contains_folded(notes.title, ?) OR contains_folded(notes.content_plain, ?))');
+        conditions.push(
+          '(contains_folded(notes.title, ?) OR contains_folded(notes.content_plain, ?))'
+        );
         params.push(term, term);
       }
     }
@@ -962,7 +978,11 @@ export class DatabaseService {
     for (const row of rows) {
       try {
         const parsed: unknown = JSON.parse(row.value);
-        if (row.key === 'theme' && typeof parsed === 'string' && VALID_THEMES.has(parsed as AppTheme)) {
+        if (
+          row.key === 'theme' &&
+          typeof parsed === 'string' &&
+          VALID_THEMES.has(parsed as AppTheme)
+        ) {
           result.theme = parsed as AppTheme;
         } else if (row.key === 'autostart' && typeof parsed === 'boolean') {
           result.autostart = parsed;

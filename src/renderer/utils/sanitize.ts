@@ -159,7 +159,8 @@ export function upgradeLegacyChecklistHtml(rawHtml: string): string {
     if (isLegacyChecklist) {
       const el = child as HTMLElement;
       const checkbox = el.querySelector<HTMLInputElement>('input[type="checkbox"]');
-      const checked = el.classList.contains('checked') || Boolean(checkbox?.hasAttribute('checked'));
+      const checked =
+        el.classList.contains('checked') || Boolean(checkbox?.hasAttribute('checked'));
       const textSpan = el.querySelector('.checklist-text') || el.querySelector('span');
 
       if (!activeTaskList) {

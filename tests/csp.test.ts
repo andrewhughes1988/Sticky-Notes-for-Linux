@@ -58,7 +58,7 @@ test('NOTE_COLORS in types.ts matches CSS themes and color swatches in index.css
   for (const colorKey of Object.keys(NOTE_COLORS) as NoteColor[]) {
     const theme = NOTE_COLORS[colorKey];
     const themeBlockRegex = new RegExp(
-      `:where\\(\\.note-container,\\s*\\.note-card\\)\\[data-color="${colorKey}"\\]\\s*\\{([^}]*)\\}`,
+      `:where\\(\\.note-container,\\s*\\.note-card\\)\\[data-color=["']${colorKey}["']\\]\\s*\\{([^}]*)\\}`,
       'i'
     );
     const themeMatch = css.match(themeBlockRegex);
@@ -77,7 +77,7 @@ test('NOTE_COLORS in types.ts matches CSS themes and color swatches in index.css
     );
 
     const swatchRegex = new RegExp(
-      `\\.color-swatch\\[data-color="${colorKey}"\\]\\s*\\{\\s*background-color:\\s*${theme.dotColor};\\s*\\}`,
+      `\\.color-swatch\\[data-color=["']${colorKey}["']\\]\\s*\\{\\s*background-color:\\s*${theme.dotColor};\\s*\\}`,
       'i'
     );
     assert.match(css, swatchRegex, `Missing or mismatched .color-swatch for ${colorKey}`);

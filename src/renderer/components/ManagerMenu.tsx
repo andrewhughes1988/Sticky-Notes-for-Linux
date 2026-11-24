@@ -97,7 +97,11 @@ const ManagerMenuComponent: React.FC<ManagerMenuProps> = ({
           onClick={onToggleTheme}
         >
           <span className="manager-menu-item-left">
-            {isDarkMode ? <Moon size={15} aria-hidden="true" /> : <Sun size={15} aria-hidden="true" />}
+            {isDarkMode ? (
+              <Moon size={15} aria-hidden="true" />
+            ) : (
+              <Sun size={15} aria-hidden="true" />
+            )}
             <span>Dark mode</span>
           </span>
           <span className={`menu-switch-pill ${isDarkMode ? 'on' : ''}`} aria-hidden="true" />

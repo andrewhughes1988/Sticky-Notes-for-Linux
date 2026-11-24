@@ -82,9 +82,11 @@ test('DatabaseService encryption-at-rest eliminates plaintext on disk, preserves
       assert.ok(row.title.startsWith('enc:v1:'));
       assert.ok(row.content_html.startsWith('enc:v1:'));
       assert.ok(row.content_plain.startsWith('enc:v1:'));
-      assert.deepEqual(inspect.prepare('SELECT COUNT(*) AS n FROM notes_fts_docsize').get(), { n: 0 });
+      assert.deepEqual(inspect.prepare('SELECT COUNT(*) AS n FROM notes_fts_docsize').get(), {
+        n: 0,
+      });
       assert.deepEqual(
-        inspect.prepare("SELECT rowid FROM notes_fts WHERE notes_fts MATCH '\"Phoenix\"'").all(),
+        inspect.prepare('SELECT rowid FROM notes_fts WHERE notes_fts MATCH \'"Phoenix"\'').all(),
         []
       );
     } finally {
@@ -96,7 +98,9 @@ test('DatabaseService encryption-at-rest eliminates plaintext on disk, preserves
     try {
       assert.equal(lockedDb.isEncryptionEnabled(), true);
       assert.throws(() => lockedDb.getNoteById(note.id), /locked/i);
-      assert.throws(() => lockedDb.unlockWithCipher(new AesGcmNoteCipher(generateDataEncryptionKey())));
+      assert.throws(() =>
+        lockedDb.unlockWithCipher(new AesGcmNoteCipher(generateDataEncryptionKey()))
+      );
 
       lockedDb.unlockWithCipher(new AesGcmNoteCipher(key));
       assert.equal(lockedDb.getNoteById(note.id)?.content_plain, `${secretPhrase} Updated`);
